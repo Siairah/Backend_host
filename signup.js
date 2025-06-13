@@ -29,6 +29,7 @@ router.post("/", async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
-});
+}); // Endpoint to handle user signup
 
 module.exports = router;
+//it
