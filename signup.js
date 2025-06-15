@@ -2,12 +2,14 @@ const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
 
+// User schema and model
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
 });
 const User = mongoose.model("User", userSchema);
 
+// POST /signup endpoint
 router.post("/", async (req, res) => {
   const { username, password } = req.body;
 
@@ -29,7 +31,6 @@ router.post("/", async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
-}); // Endpoint to handle user signup
+});
 
 module.exports = router;
-//it
