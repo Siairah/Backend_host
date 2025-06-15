@@ -12,14 +12,16 @@ mongoose.connect(mongoURI)
   .then(() => console.log("MongoDB connected"))
   .catch(err => console.error("MongoDB connection error:", err));
 
+// Root route for testing if backend is up
+app.get("/", (req, res) => {
+  res.send("Backend is working ✅");
+});
+
 // Use signup route
 app.use("/signup", signupRoute);
 
-// ✅ Use the port Render provides or 3000 locally
+// Use port from environment or default 3000
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
-app.get("/", (req, res) => {
-  res.send("Backend is working ✅");
 });
