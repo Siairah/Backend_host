@@ -5,20 +5,17 @@ const signupRoute = require("./signup");
 const app = express();
 app.use(express.json());
 
-// MongoDB connection string
+// MongoDB connection
 const mongoURI = "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
 
-mongoose.connect(mongoURI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log("MongoDB connected"))
-.catch(err => console.error("MongoDB connection error:", err));
+mongoose.connect(mongoURI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.error("MongoDB connection error:", err));
 
-// Use signup route at /signup
+// Use signup route
 app.use("/signup", signupRoute);
 
-// Listen on Render's port or 3000 locally
+// ✅ Use the port Render provides or 3000 locally
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
