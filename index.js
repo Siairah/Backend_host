@@ -1,9 +1,8 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const signupRoute = require("./signup");
-const loginRoute = require("./login")
-const sendOtpRoute = require("./sendOtp");
-const sendOtpEmail = require("./sendOtpEmail");
+const loginRoute = require("./login");
+const forgotPasswordRoute = require("./forgotPassword"); // ✅ OTP route
 
 const app = express();
 app.use(express.json());
@@ -12,22 +11,33 @@ app.use(express.json());
 const mongoURI = "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
 
 mongoose.connect(mongoURI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.error("MongoDB connection error:", err));
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 
-// Root route for testing if backend is up
+// Root test route
 app.get("/", (req, res) => {
+  console.log("📥 GET / hit");
   res.send("Backend is working ✅");
 });
 
-// Use signup route
-app.use("/signup", signupRoute);
-app.use("/login", loginRoute);
-app.use("/sendOtp", sendOtpRoute);
-app.use("/sendOtpEmail", sendOtpEmail);
+// Auth routes
+app.use("/signup", (req, res, next) => {
+  console.log("📥 POST /signup hit");
+  next();
+}, signupRoute);
 
-// Use port from environment or default 3000
+app.use("/login", (req, res, next) => {
+  console.log("📥 POST /login hit");
+  next();
+}, loginRoute);
+
+app.use("/forgot-password", (req, res, next) => {
+  console.log("📥 POST /forgot-password hit");
+  next();
+}, forgotPasswordRoute);
+
+// Server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
