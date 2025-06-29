@@ -1,13 +1,28 @@
 const nodemailer = require("nodemailer");
 require("dotenv").config();
 
+// Debug print environment variables
+console.log("MAILTRAP_HOST:", process.env.MAILTRAP_HOST);
+console.log("MAILTRAP_PORT:", process.env.MAILTRAP_PORT);
+console.log("MAILTRAP_USER:", process.env.MAILTRAP_USER);
+console.log("MAILTRAP_PASS:", process.env.MAILTRAP_PASS ? "****" : undefined);
+
 const transporter = nodemailer.createTransport({
   host: process.env.MAILTRAP_HOST,
-  port: process.env.MAILTRAP_PORT,
+  port: Number(process.env.MAILTRAP_PORT), // make sure port is a number
   auth: {
     user: process.env.MAILTRAP_USER,
     pass: process.env.MAILTRAP_PASS,
   },
+});
+
+// Verify SMTP connection immediately
+transporter.verify(function (error, success) {
+  if (error) {
+    console.error("SMTP connection error:", error);
+  } else {
+    console.log("SMTP server is ready to take messages");
+  }
 });
 
 const sendOtpEmail = async (email, otp) => {
@@ -34,7 +49,13 @@ const sendOtpEmail = async (email, otp) => {
     html: htmlContent,
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`OTP email sent to ${email}`);
+  } catch (error) {
+    console.error("Failed to send OTP email:", error);
+    throw error; // rethrow so calling code can handle it
+  }
 };
 
 module.exports = sendOtpEmail;
