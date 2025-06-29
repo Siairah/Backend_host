@@ -4,12 +4,9 @@ const sendOtpEmail = require("./sendOtpEmail");
 const User = require("./models");
 
 const router = express.Router();
-const otpStore = new Map(); // Stores { email: { code, expiresAt } }
+const otpStore = new Map(); // email => { code, expiresAt }
 
-/**
- * @route POST /forgot-password
- * @desc Send OTP to user email
- */
+// Send OTP and overwrite any previous OTP immediately
 router.post("/", async (req, res) => {
   const { email } = req.body;
 
@@ -24,10 +21,16 @@ router.post("/", async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
+    // Optional: delete old OTP before generating new one
+    if (otpStore.has(email)) {
+      otpStore.delete(email);
+    }
+
     const otp = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes from now
 
     otpStore.set(email, { code: otp, expiresAt });
+
     console.log("Found user:", user.email);
     console.log("Generated OTP:", otp);
 
@@ -40,10 +43,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-/**
- * @route POST /forgot-password/verify
- * @desc Verify OTP
- */
+// Verify OTP
 router.post("/verify", (req, res) => {
   const { email, otp } = req.body;
 
@@ -67,7 +67,7 @@ router.post("/verify", (req, res) => {
     return res.status(400).json({ success: false, message: "Invalid OTP" });
   }
 
-  otpStore.delete(email); // one-time use
+  otpStore.delete(email); // One-time use
   return res.json({ success: true, message: "OTP verified successfully" });
 });
 
