@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const signupRoute = require("./signup");
 const loginRoute = require("./login")
+const sendOtpRoute = require("./sendOtp");
 
 const app = express();
 app.use(express.json());
@@ -21,6 +22,7 @@ app.get("/", (req, res) => {
 // Use signup route
 app.use("/signup", signupRoute);
 app.use("/login", loginRoute);
+app.use("/sendOtp", sendOtpRoute);
 
 // Use port from environment or default 3000
 const PORT = process.env.PORT || 3000;
