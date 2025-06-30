@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const mongoose = require("mongoose"); // Add this line
 const sendOtpEmail = require("./sendOtpEmail");
 const User = require("./models");
 
