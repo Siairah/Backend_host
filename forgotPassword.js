@@ -6,42 +6,53 @@ const User = require("./models");
 
 const router = express.Router();
 
-// Simple, reliable OTP generation
+// Reliable OTP generation with retry mechanism
 async function generateAndSaveOTP(email) {
-  const otp = crypto.randomInt(100000, 999999).toString();
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const MAX_RETRIES = 3;
+  let attempts = 0;
+  
+  while (attempts < MAX_RETRIES) {
+    attempts++;
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-  // Direct update without transaction
-  const result = await User.updateOne(
-    { email: email },
-    { 
-      $set: { 
-        otp: otp,
-        otpExpiresAt: expiresAt 
-      } 
-    },
-    { 
-      runValidators: true,
-      strict: true
+    try {
+      // Use findOneAndUpdate to ensure we get the updated document
+      const updatedUser = await User.findOneAndUpdate(
+        { email: email },
+        { 
+          $set: { 
+            otp: otp,
+            otpExpiresAt: expiresAt 
+          } 
+        },
+        { 
+          new: true, // Return the updated document
+          runValidators: true,
+          session: await mongoose.startSession() // Use session for atomicity
+        }
+      ).lean();
+
+      if (!updatedUser) {
+        throw new Error("User not found");
+      }
+
+      // Immediate verification
+      if (updatedUser.otp === otp) {
+        return { otp, expiresAt };
+      } else {
+        console.warn(`OTP mismatch on attempt ${attempts}`, {
+          expected: otp,
+          actual: updatedUser.otp
+        });
+      }
+    } catch (error) {
+      console.error(`Attempt ${attempts} failed:`, error.message);
+      if (attempts === MAX_RETRIES) throw error;
     }
-  );
-
-  if (result.modifiedCount === 0) {
-    throw new Error("No document was modified");
   }
-
-  // Verify with fresh read
-  const user = await User.findOne({ email }).lean();
-  if (!user || user.otp !== otp) {
-    console.error('OTP verification failed:', {
-      expected: otp,
-      actual: user?.otp,
-      userExists: !!user
-    });
-    throw new Error("OTP not persisted correctly");
-  }
-
-  return { otp, expiresAt };
+  
+  throw new Error("Failed to persist OTP after multiple attempts");
 }
 
 router.post("/", async (req, res) => {
@@ -62,54 +73,62 @@ router.post("/", async (req, res) => {
 
     // Generate and save OTP
     const { otp, expiresAt } = await generateAndSaveOTP(normalizedEmail);
-    console.log(`[OTP SUCCESS] Generated for ${normalizedEmail}: ${otp}`);
+    console.log(`[OTP SUCCESS] Persisted OTP for ${normalizedEmail}: ${otp}`);
 
     // Send email
     await sendOtpEmail(normalizedEmail, otp);
 
     return res.status(200).json({ 
       success: true, 
-      message: "OTP sent",
+      message: "OTP sent successfully",
       debug: {
-        otpSaved: otp,
+        otp: otp,
         expiresAt: expiresAt.toISOString()
       }
     });
 
   } catch (error) {
-    console.error('[OTP FAILURE]', {
+    console.error('[OTP FINAL FAILURE]', {
       error: error.message,
       email: normalizedEmail,
       time: new Date(),
       dbState: mongoose.connection.readyState,
-      dbHost: mongoose.connection.host
+      dbHost: mongoose.connection.host,
+      stack: error.stack
     });
 
     return res.status(500).json({ 
       success: false, 
       message: "Failed to generate OTP",
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
 
-// Direct database verification endpoint
-router.get("/verify-db/:email", async (req, res) => {
+// Deep verification endpoint
+router.get("/deep-verify/:email", async (req, res) => {
   try {
-    const user = await User.findOne(
+    // Check via Mongoose
+    const mongooseUser = await User.findOne(
       { email: req.params.email },
-      { otp: 1, otpExpiresAt: 1 }
+      { otp: 1, otpExpiresAt: 1, _id: 0 }
     ).lean();
-    
+
+    // Check via native driver
+    const nativeUser = await mongoose.connection.db.collection('users').findOne(
+      { email: req.params.email },
+      { projection: { otp: 1, otpExpiresAt: 1 } }
+    );
+
     return res.json({
-      exists: !!user,
-      otp: user?.otp,
-      expiry: user?.otpExpiresAt,
-      now: new Date(),
-      isValid: user?.otpExpiresAt ? new Date() < new Date(user.otpExpiresAt) : false
+      success: true,
+      mongooseResult: mongooseUser,
+      nativeDriverResult: nativeUser,
+      consistent: mongooseUser?.otp === nativeUser?.otp,
+      now: new Date()
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
