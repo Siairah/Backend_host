@@ -2,9 +2,10 @@ const express = require("express");
 const crypto = require("crypto");
 const sendOtpEmail = require("./sendOtpEmail");
 const User = require("./models");
+const otpStore = require("./otpStore"); // 👈 Use shared store instead of new Map()
+
 
 const router = express.Router();
-const otpStore = new Map(); // email => { code, expiresAt }
 
 // Send OTP and overwrite any previous OTP immediately
 router.post("/", async (req, res) => {
