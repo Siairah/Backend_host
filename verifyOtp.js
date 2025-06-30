@@ -1,4 +1,3 @@
-// routes/verifyOtp.js
 const express = require("express");
 const User = require("./models");
 
@@ -12,17 +11,18 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const normalizedEmail = email.toLowerCase();
+    const normalizedEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: normalizedEmail });
-    console.log("User OTP:", user.otp);
-console.log("User OTP expiry:", user.otpExpiresAt);
 
+    console.log("User OTP:", user?.otp);
+    console.log("User OTP expiry:", user?.otpExpiresAt);
 
     if (!user || !user.otp || !user.otpExpiresAt) {
       return res.status(400).json({ success: false, message: "OTP not found or expired" });
     }
 
     if (Date.now() > new Date(user.otpExpiresAt).getTime()) {
+      // OTP expired, clear it
       user.otp = undefined;
       user.otpExpiresAt = undefined;
       await user.save();
@@ -33,6 +33,7 @@ console.log("User OTP expiry:", user.otpExpiresAt);
       return res.status(400).json({ success: false, message: "Invalid OTP" });
     }
 
+    // OTP valid, clear it after successful verification
     user.otp = undefined;
     user.otpExpiresAt = undefined;
     await user.save();

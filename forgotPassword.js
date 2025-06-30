@@ -1,4 +1,3 @@
-// routes/forgotPassword.js
 const express = require("express");
 const crypto = require("crypto");
 const sendOtpEmail = require("./sendOtpEmail");
@@ -19,7 +18,6 @@ router.post("/", async (req, res) => {
     console.log(`[INFO] Forgot Password requested for email: ${normalizedEmail}`);
 
     const user = await User.findOne({ email: normalizedEmail });
-
     if (!user) {
       console.log(`[WARN] User not found for email: ${normalizedEmail}`);
       return res.status(404).json({ success: false, message: "User not found" });
@@ -33,7 +31,7 @@ router.post("/", async (req, res) => {
     await user.save();
 
     console.log(`[SUCCESS] OTP generated and saved for ${normalizedEmail}: ${otp} (expires at ${expiresAt.toISOString()})`);
-    
+
     await sendOtpEmail(normalizedEmail, otp);
     console.log(`[SUCCESS] OTP email sent to ${normalizedEmail}`);
 
