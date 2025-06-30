@@ -7,45 +7,63 @@ const userSchema = new mongoose.Schema({
     required: true, 
     unique: true,
     lowercase: true,
-    trim: true
+    trim: true,
+    validate: {
+      validator: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+      message: props => `${props.value} is not a valid email!`
+    }
   },
   password: { type: String, required: true },
   phone: String,
   otp: { 
     type: String,
-    index: true,
-    sparse: true
+    minlength: 6,
+    maxlength: 6,
+    validate: {
+      validator: (v) => /^\d{6}$/.test(v),
+      message: props => `${props.value} is not a valid 6-digit OTP!`
+    }
   },
   otpExpiresAt: {
     type: Date,
-    index: { expires: '5m' } // Auto-expire after 5 minutes
+    required: function() { return !!this.otp; }
   }
 }, {
   timestamps: true,
-  // Ensure we can see the actual error when save fails
-  writeConcern: {
-    w: 'majority',
-    j: true,
-    wtimeout: 1000
-  }
+  bufferCommands: false, // Disable command buffering
+  autoCreate: false // Disable automatic collection creation
 });
 
-// Add compound index for faster OTP lookups
-userSchema.index({ email: 1, otp: 1 }, { unique: true, sparse: true });
+// Create collection explicitly with proper settings
+userSchema.set('collection', 'users');
+userSchema.set('strict', true); // Enforce strict schema
+userSchema.set('validateBeforeSave', true); // Force validation
 
-// Add method to verify OTP
-userSchema.methods.verifyOTP = function(otp) {
-  return this.otp === otp && new Date() < this.otpExpiresAt;
-};
-
-// Middleware to ensure clean OTP data
-userSchema.pre('save', function(next) {
-  if (this.isModified('otp') && !this.otp) {
-    this.otpExpiresAt = undefined;
-  }
-  next();
+// Add index for OTP field
+userSchema.index({ otp: 1 }, { 
+  unique: true, 
+  partialFilterExpression: { otp: { $exists: true } }
 });
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
+
+// Verify collection exists and has proper indexes
+async function verifyCollection() {
+  try {
+    const collection = mongoose.connection.db.collection('users');
+    await collection.createIndex({ email: 1 }, { unique: true });
+    await collection.createIndex({ otp: 1 }, { 
+      unique: true, 
+      partialFilterExpression: { otp: { $exists: true } }
+    });
+    console.log('Verified collection and indexes');
+  } catch (err) {
+    console.error('Collection verification failed:', err);
+    throw err;
+  }
+}
+
+// Call this when your DB connects
+mongoose.connection.on('connected', verifyCollection);
 
 module.exports = User;
