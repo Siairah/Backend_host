@@ -1,21 +1,5 @@
 const mongoose = require("mongoose");
 
-// Create separate schema for OTP to ensure no interference
-const OTPSchema = new mongoose.Schema({
-  code: {
-    type: String,
-    required: true,
-    validate: {
-      validator: v => /^\d{6}$/.test(v),
-      message: props => `${props.value} is not a valid 6-digit OTP!`
-    }
-  },
-  expiresAt: {
-    type: Date,
-    required: true
-  }
-}, { _id: false });
-
 const userSchema = new mongoose.Schema({
   fullName: String,
   email: { 
@@ -27,24 +11,26 @@ const userSchema = new mongoose.Schema({
   },
   password: { type: String, required: true },
   phone: String,
-  otpData: OTPSchema // Embedded document for OTP
+  otp: {
+    type: String,
+    validate: {
+      validator: v => v === undefined || /^\d{6}$/.test(v),
+      message: props => `${props.value} is not a valid 6-digit OTP!`
+    }
+  },
+  otpExpiresAt: Date
 }, {
-  timestamps: true,
-  // Disable all middleware that might interfere
-  bufferCommands: false,
-  autoIndex: false,
-  autoCreate: false
+  // Disable virtuals and other potential middleware
+  id: false,
+  virtuals: false,
+  strict: true,
+  timestamps: true
 });
 
-// Create collection explicitly with proper settings
-userSchema.set('collection', 'users');
-userSchema.set('strict', 'throw'); // Throw errors for unknown fields
-
-// Completely bypass Mongoose for critical operations
-userSchema.statics.directUpdate = async function(filter, update) {
-  return this.collection.updateOne(filter, update);
-};
-
-const User = mongoose.models.User || mongoose.model("User", userSchema);
+// Create model only once
+if (mongoose.models.User) {
+  delete mongoose.models.User;
+}
+const User = mongoose.model("User", userSchema);
 
 module.exports = User;

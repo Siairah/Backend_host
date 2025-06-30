@@ -6,33 +6,34 @@ const User = require("./models");
 
 const router = express.Router();
 
-async function persistOTP(email, otp, expiresAt) {
-  // Bypass Mongoose completely for the update
-  const result = await User.directUpdate(
-    { email: email },
-    { $set: { otpData: { code: otp, expiresAt: expiresAt } } }
-  );
-
-  if (result.modifiedCount === 0) {
-    throw new Error("Database update failed");
+async function saveOTP(email, otp, expiresAt) {
+  // Method 1: Try native driver first
+  try {
+    const result = await mongoose.connection.db.collection('users').updateOne(
+      { email: email },
+      { $set: { otp: otp, otpExpiresAt: expiresAt } },
+      { upsert: false }
+    );
+    
+    if (result.modifiedCount === 1) {
+      return true;
+    }
+  } catch (nativeError) {
+    console.error('Native driver update failed:', nativeError.message);
   }
 
-  // Verify using raw driver
-  const user = await mongoose.connection.db.collection('users').findOne(
-    { email: email },
-    { projection: { 'otpData.code': 1, 'otpData.expiresAt': 1 } }
-  );
-
-  if (!user?.otpData?.code || user.otpData.code !== otp) {
-    console.error('Database verification failed:', {
-      expected: otp,
-      actual: user?.otpData?.code,
-      fullDocument: user
-    });
-    throw new Error("OTP verification failed");
+  // Method 2: Fallback to Mongoose
+  try {
+    await User.findOneAndUpdate(
+      { email: email },
+      { otp: otp, otpExpiresAt: expiresAt },
+      { runValidators: true, context: 'query' }
+    );
+    return true;
+  } catch (mongooseError) {
+    console.error('Mongoose update failed:', mongooseError.message);
+    throw new Error('All persistence methods failed');
   }
-
-  return true;
 }
 
 router.post("/", async (req, res) => {
@@ -43,68 +44,66 @@ router.post("/", async (req, res) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  console.log(`[OTP] Generation request for ${normalizedEmail}`);
+  console.log(`[OTP] Request for ${normalizedEmail}`);
 
   try {
     // Generate OTP
     const otp = crypto.randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Persist with verification
-    await persistOTP(normalizedEmail, otp, expiresAt);
-    console.log(`[OTP SUCCESS] Persisted for ${normalizedEmail}`);
+    // Persist OTP
+    await saveOTP(normalizedEmail, otp, expiresAt);
+
+    // Verify persistence
+    const user = await mongoose.connection.db.collection('users').findOne(
+      { email: normalizedEmail },
+      { projection: { otp: 1, otpExpiresAt: 1 } }
+    );
+
+    if (!user || user.otp !== otp) {
+      throw new Error('OTP verification failed after save');
+    }
 
     // Send email
     await sendOtpEmail(normalizedEmail, otp);
 
     return res.status(200).json({ 
       success: true, 
-      message: "OTP sent successfully" 
+      message: "OTP sent successfully"
     });
 
   } catch (error) {
-    console.error('[OTP ULTIMATE FAILURE]', {
+    console.error('[OTP FINAL ERROR]', {
       error: error.message,
       email: normalizedEmail,
-      dbTime: new Date(await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.localTime)),
-      mongodbVersion: await mongoose.connection.db.command({ buildInfo: 1 }).then(i => i.version),
-      storageEngine: await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.storageEngine.name)
+      time: new Date(),
+      dbState: mongoose.connection.readyState,
+      dbHost: mongoose.connection.host
     });
 
     return res.status(500).json({ 
       success: false, 
-      message: "Failed to process OTP request",
-      systemStatus: "Please contact support with the request timestamp"
+      message: "Failed to process OTP request"
     });
   }
 });
 
-// Ultimate verification endpoint
-router.get("/ultimate-verify/:email", async (req, res) => {
+router.get("/verify-otp/:email", async (req, res) => {
   try {
-    const result = await mongoose.connection.db.command({
-      find: "users",
-      filter: { email: req.params.email },
-      projection: { otpData: 1 },
-      limit: 1
-    });
-
-    const doc = result.cursor.firstBatch[0];
+    const user = await mongoose.connection.db.collection('users').findOne(
+      { email: req.params.email },
+      { projection: { otp: 1, otpExpiresAt: 1 } }
+    );
+    
     return res.json({
       success: true,
-      otpExists: !!doc?.otpData?.code,
-      otp: doc?.otpData?.code,
-      expiresAt: doc?.otpData?.expiresAt,
-      storageEngine: await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.storageEngine.name),
-      mongodbVersion: await mongoose.connection.db.command({ buildInfo: 1 }).then(i => i.version),
-      serverTime: new Date(await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.localTime))
+      otp: user?.otp,
+      expiresAt: user?.otpExpiresAt,
+      isValid: user?.otpExpiresAt ? new Date() < user.otpExpiresAt : false,
+      now: new Date()
     });
   } catch (error) {
-    return res.status(500).json({ 
-      success: false, 
-      error: error.message,
-      stack: error.stack 
-    });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
