@@ -5,118 +5,96 @@ const User = require("./models");
 
 const router = express.Router();
 
+// Helper function to verify persistence
+async function verifyOTPPersistence(userId, expectedOTP) {
+  const freshUser = await User.findById(userId).lean();
+  if (!freshUser || freshUser.otp !== expectedOTP) {
+    console.error('Persistence verification failed!');
+    console.error('Expected OTP:', expectedOTP);
+    console.error('Actual stored OTP:', freshUser?.otp);
+    throw new Error('OTP not persisted correctly');
+  }
+  return true;
+}
+
 router.post("/", async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
-    console.log("[ERROR] Email not provided");
-    return res.status(400).json({ success: false, message: "Email is required" });
+    return res.status(400).json({ success: false, message: "Email required" });
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  console.log(`[INFO] Forgot Password requested for: ${normalizedEmail}`);
+  console.log(`[OTP] Request for ${normalizedEmail}`);
 
   try {
-    // Verify database connection first
-    if (mongoose.connection.readyState !== 1) {
-      console.error("[ERROR] Database not connected");
-      return res.status(500).json({ success: false, message: "Database not connected" });
+    // Use findOneAndUpdate for atomic operation
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    const updatedUser = await User.findOneAndUpdate(
+      { email: normalizedEmail },
+      { 
+        $set: { 
+          otp: otp,
+          otpExpiresAt: expiresAt 
+        } 
+      },
+      { 
+        new: true,
+        upsert: false,
+        runValidators: true
+      }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Find user with session to ensure consistency
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    // Verify the OTP was actually saved
+    await verifyOTPPersistence(updatedUser._id, otp);
 
-    try {
-      const user = await User.findOne({ email: normalizedEmail }).session(session);
-      if (!user) {
-        console.log(`[WARN] User not found: ${normalizedEmail}`);
-        await session.abortTransaction();
-        return res.status(404).json({ success: false, message: "User not found" });
+    // Send email
+    await sendOtpEmail(normalizedEmail, otp);
+    
+    console.log(`[OTP SUCCESS] For ${normalizedEmail}: ${otp}`);
+    console.log(`[STORAGE VERIFIED] OTP persisted correctly`);
+
+    return res.status(200).json({ 
+      success: true, 
+      message: "OTP sent",
+      debug: {
+        otp: otp,
+        expiresAt: expiresAt,
+        userId: updatedUser._id
       }
-
-      const otp = crypto.randomInt(100000, 999999).toString();
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-
-      console.log(`[DEBUG] Attempting to save OTP ${otp} for ${normalizedEmail}`);
-
-      // Use atomic update
-      const updatedUser = await User.findOneAndUpdate(
-        { _id: user._id },
-        { 
-          $set: { 
-            otp: otp,
-            otpExpiresAt: expiresAt 
-          } 
-        },
-        { new: true, session }
-      );
-
-      if (!updatedUser) {
-        throw new Error("User update failed");
-      }
-
-      await session.commitTransaction();
-      console.log(`[SUCCESS] OTP saved to database for ${normalizedEmail}: ${otp}`);
-
-      // Verify the save actually worked
-      const freshUser = await User.findById(user._id);
-      console.log(`[VERIFY] Fresh read OTP: ${freshUser.otp}, Expiry: ${freshUser.otpExpiresAt}`);
-
-      // Send email
-      await sendOtpEmail(normalizedEmail, otp);
-      console.log(`[SUCCESS] Email sent to ${normalizedEmail}`);
-
-      return res.status(200).json({ 
-        success: true, 
-        message: "OTP sent to email",
-        debug: {
-          savedOtp: freshUser.otp,
-          savedExpiry: freshUser.otpExpiresAt
-        }
-      });
-
-    } catch (transactionError) {
-      await session.abortTransaction();
-      console.error("[ERROR] Transaction failed:", transactionError);
-      throw transactionError;
-    } finally {
-      session.endSession();
-    }
+    });
 
   } catch (error) {
-    console.error("[ERROR] Forgot password process failed:", error);
+    console.error('[OTP ERROR]', error);
     return res.status(500).json({ 
       success: false, 
-      message: "Server error",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined
+      message: "Failed to process OTP",
+      error: error.message
     });
   }
 });
 
-// Debug endpoint
-router.get("/debug", async (req, res) => {
+// Add real-time verification endpoint
+router.get("/verify-storage/:userId", async (req, res) => {
   try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({ success: false, message: "Email required" });
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    const user = await User.findById(req.params.userId);
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
     return res.status(200).json({
       success: true,
       otp: user.otp,
       otpExpiresAt: user.otpExpiresAt,
-      now: new Date(),
-      isExpired: user.otpExpiresAt ? new Date() > user.otpExpiresAt : true
+      exists: !!user.otp
     });
   } catch (error) {
-    console.error("[ERROR] Debug failed:", error);
-    return res.status(500).json({ success: false, message: "Debug error" });
+    return res.status(500).json({ success: false, message: error.message });
   }
 });
 

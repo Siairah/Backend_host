@@ -9,100 +9,84 @@ router.post("/", async (req, res) => {
   if (!email || !otp) {
     return res.status(400).json({ 
       success: false, 
-      message: "Email and OTP are required" 
+      message: "Email and OTP required" 
     });
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  console.log(`[INFO] OTP verification for: ${normalizedEmail}`);
+  console.log(`[OTP VERIFY] Attempt for ${normalizedEmail}`);
 
   try {
-    // Verify database connection
-    if (mongoose.connection.readyState !== 1) {
-      console.error("[ERROR] Database not connected");
-      return res.status(500).json({ success: false, message: "Database not connected" });
+    // First try finding normally
+    let user = await User.findOne({ email: normalizedEmail });
+    
+    // If OTP is undefined, try forcing a fresh read
+    if (user && (user.otp === undefined || user.otpExpiresAt === undefined)) {
+      console.log('[OTP DEBUG] Initial read failed, forcing fresh read');
+      user = await User.findOne({ email: normalizedEmail }).lean().exec();
     }
 
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
-    try {
-      const user = await User.findOne({ email: normalizedEmail }).session(session);
-      
-      if (!user) {
-        console.log(`[WARN] User not found: ${normalizedEmail}`);
-        await session.abortTransaction();
-        return res.status(404).json({ success: false, message: "User not found" });
-      }
+    console.log('[OTP DEBUG] Retrieved user data:', {
+      storedOTP: user.otp,
+      storedExpiry: user.otpExpiresAt,
+      currentTime: new Date()
+    });
 
-      console.log(`[DEBUG] User OTP: ${user.otp}, Expiry: ${user.otpExpiresAt}`);
-      console.log(`[DEBUG] Current time: ${new Date()}`);
+    if (!user.otp || !user.otpExpiresAt) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "No active OTP found",
+        debug: {
+          hadOtp: !!user.otp,
+          hadExpiry: !!user.otpExpiresAt
+        }
+      });
+    }
 
-      // Check if OTP exists
-      if (!user.otp || !user.otpExpiresAt) {
-        console.log(`[WARN] No OTP found for: ${normalizedEmail}`);
-        await session.abortTransaction();
-        return res.status(400).json({ 
-          success: false, 
-          message: "OTP not found or expired" 
-        });
-      }
-
-      // Check expiration
-      if (new Date() > user.otpExpiresAt) {
-        console.log(`[WARN] OTP expired for: ${normalizedEmail}`);
-        // Clear expired OTP
-        await User.updateOne(
-          { _id: user._id },
-          { $unset: { otp: "", otpExpiresAt: "" } },
-          { session }
-        );
-        await session.commitTransaction();
-        return res.status(400).json({ 
-          success: false, 
-          message: "OTP expired" 
-        });
-      }
-
-      // Verify OTP
-      if (user.otp !== otp) {
-        console.log(`[WARN] Invalid OTP for: ${normalizedEmail}`);
-        await session.abortTransaction();
-        return res.status(400).json({ 
-          success: false, 
-          message: "Invalid OTP" 
-        });
-      }
-
-      // OTP is valid - clear it
+    if (new Date() > user.otpExpiresAt) {
+      // Auto-clean expired OTPs
       await User.updateOne(
         { _id: user._id },
-        { $unset: { otp: "", otpExpiresAt: "" } },
-        { session }
+        { $unset: { otp: "", otpExpiresAt: "" } }
       );
-
-      await session.commitTransaction();
-      console.log(`[SUCCESS] OTP verified for: ${normalizedEmail}`);
-
-      return res.status(200).json({ 
-        success: true, 
-        message: "OTP verified successfully" 
+      return res.status(400).json({ 
+        success: false, 
+        message: "OTP expired" 
       });
-
-    } catch (transactionError) {
-      await session.abortTransaction();
-      console.error("[ERROR] Transaction failed:", transactionError);
-      throw transactionError;
-    } finally {
-      session.endSession();
     }
 
+    if (user.otp !== otp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid OTP",
+        debug: {
+          expected: user.otp,
+          received: otp
+        }
+      });
+    }
+
+    // Clear OTP on successful verification
+    await User.updateOne(
+      { _id: user._id },
+      { $unset: { otp: "", otpExpiresAt: "" } }
+    );
+
+    return res.status(200).json({ 
+      success: true, 
+      message: "OTP verified" 
+    });
+
   } catch (error) {
-    console.error("[ERROR] OTP verification failed:", error);
+    console.error('[OTP VERIFY ERROR]', error);
     return res.status(500).json({ 
       success: false, 
-      message: "Server error",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined
+      message: "Verification failed",
+      error: error.message
     });
   }
 });
