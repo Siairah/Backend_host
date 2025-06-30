@@ -1,5 +1,5 @@
 const express = require("express");
-const mongoose = require("mongoose"); // Add this line
+const mongoose = require("mongoose");
 const User = require("./models");
 
 const router = express.Router();
@@ -8,6 +8,7 @@ router.post("/", async (req, res) => {
   const { email, otp } = req.body;
 
   if (!email || !otp) {
+    console.log('[OTP VERIFY] Missing email or OTP');
     return res.status(400).json({ 
       success: false, 
       message: "Email and OTP required" 
@@ -15,59 +16,72 @@ router.post("/", async (req, res) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  console.log(`[OTP VERIFY] Attempt for ${normalizedEmail}`);
+  console.log(`[OTP VERIFY] Attempt for ${normalizedEmail} with OTP: ${otp}`);
 
   try {
-    // Bypass Mongoose and go directly to collection
     const collection = mongoose.connection.db.collection('users');
+    
+    // First check for valid, unexpired OTP
     const user = await collection.findOne({
       email: normalizedEmail,
       otp: otp,
       otpExpiresAt: { $gt: new Date() }
     });
 
-    if (!user) {
-      // Check if OTP exists but expired
-      const expiredUser = await collection.findOne({
-        email: normalizedEmail,
-        otp: { $exists: true }
-      });
-
-      if (expiredUser) {
-        // Clean up expired OTP
-        await collection.updateOne(
-          { _id: expiredUser._id },
-          { $unset: { otp: "", otpExpiresAt: "" } }
-        );
-        return res.status(400).json({ 
-          success: false, 
-          message: "OTP expired" 
-        });
-      }
+    if (user) {
+      console.log(`[OTP SUCCESS] Valid OTP for ${normalizedEmail}`);
       
-      return res.status(400).json({ 
-        success: false, 
-        message: "Invalid OTP or user" 
+      // Clear OTP after successful verification
+      await collection.updateOne(
+        { _id: user._id },
+        { $unset: { otp: "", otpExpiresAt: "" } }
+      );
+      
+      return res.status(200).json({ 
+        success: true, 
+        message: "OTP verified successfully" 
       });
     }
 
-    // OTP is valid - clear it
-    await collection.updateOne(
-      { _id: user._id },
-      { $unset: { otp: "", otpExpiresAt: "" } }
-    );
+    // Check for expired OTP
+    const expiredUser = await collection.findOne({
+      email: normalizedEmail,
+      otp: { $exists: true }
+    });
 
-    return res.status(200).json({ 
-      success: true, 
-      message: "OTP verified" 
+    if (expiredUser) {
+      console.log(`[OTP EXPIRED] For ${normalizedEmail} at ${expiredUser.otpExpiresAt}`);
+      
+      // Clean up expired OTP
+      await collection.updateOne(
+        { _id: expiredUser._id },
+        { $unset: { otp: "", otpExpiresAt: "" } }
+      );
+      
+      return res.status(400).json({ 
+        success: false, 
+        message: "OTP expired" 
+      });
+    }
+
+    console.log(`[OTP INVALID] No matching OTP for ${normalizedEmail}`);
+    return res.status(400).json({ 
+      success: false, 
+      message: "Invalid OTP or user" 
     });
 
   } catch (error) {
-    console.error('[VERIFICATION ERROR]', error);
+    console.error('[VERIFICATION ERROR]', {
+      error: error.message,
+      email: normalizedEmail,
+      time: new Date(),
+      stack: error.stack
+    });
+    
     return res.status(500).json({ 
       success: false, 
       message: "Verification failed",
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
