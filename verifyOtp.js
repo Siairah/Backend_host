@@ -1,6 +1,6 @@
 // routes/verifyOtp.js
 const express = require("express");
-const User = require("../models/User");
+const User = require("./models");
 
 const router = express.Router();
 
