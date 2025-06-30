@@ -6,54 +6,33 @@ const User = require("./models");
 
 const router = express.Router();
 
-// Hybrid OTP persistence with fallback
 async function persistOTP(email, otp, expiresAt) {
-  // Try Mongoose update first
-  const mongooseResult = await User.updateOne(
+  // Bypass Mongoose completely for the update
+  const result = await User.directUpdate(
     { email: email },
-    { $set: { otp: otp, otpExpiresAt: expiresAt } },
-    { runValidators: true }
+    { $set: { otpData: { code: otp, expiresAt: expiresAt } } }
   );
 
-  // If Mongoose fails, try native driver
-  if (mongooseResult.modifiedCount === 0) {
-    console.warn('Mongoose update failed, trying native driver');
-    const nativeResult = await mongoose.connection.db.collection('users').updateOne(
-      { email: email },
-      { $set: { otp: otp, otpExpiresAt: expiresAt } }
-    );
-    return nativeResult.modifiedCount > 0;
+  if (result.modifiedCount === 0) {
+    throw new Error("Database update failed");
   }
 
-  return true;
-}
-
-async function generateAndSaveOTP(email) {
-  const otp = crypto.randomInt(100000, 999999).toString();
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-  // Persist using hybrid approach
-  const persisted = await persistOTP(email, otp, expiresAt);
-  if (!persisted) {
-    throw new Error("Failed to persist OTP");
-  }
-
-  // Verify with native driver
+  // Verify using raw driver
   const user = await mongoose.connection.db.collection('users').findOne(
     { email: email },
-    { projection: { otp: 1, otpExpiresAt: 1 } }
+    { projection: { 'otpData.code': 1, 'otpData.expiresAt': 1 } }
   );
 
-  if (!user || user.otp !== otp) {
-    console.error('Final verification failed', {
+  if (!user?.otpData?.code || user.otpData.code !== otp) {
+    console.error('Database verification failed:', {
       expected: otp,
-      actual: user?.otp,
-      userExists: !!user
+      actual: user?.otpData?.code,
+      fullDocument: user
     });
     throw new Error("OTP verification failed");
   }
 
-  return { otp, expiresAt };
+  return true;
 }
 
 router.post("/", async (req, res) => {
@@ -67,67 +46,58 @@ router.post("/", async (req, res) => {
   console.log(`[OTP] Generation request for ${normalizedEmail}`);
 
   try {
-    // Triple-check connection
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connection.asPromise();
-      if (mongoose.connection.readyState !== 1) {
-        throw new Error("Database connection unstable");
-      }
-    }
+    // Generate OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Generate and persist OTP
-    const { otp, expiresAt } = await generateAndSaveOTP(normalizedEmail);
-    console.log(`[OTP SUCCESS] Verified persistence for ${normalizedEmail}`);
+    // Persist with verification
+    await persistOTP(normalizedEmail, otp, expiresAt);
+    console.log(`[OTP SUCCESS] Persisted for ${normalizedEmail}`);
 
     // Send email
     await sendOtpEmail(normalizedEmail, otp);
 
     return res.status(200).json({ 
       success: true, 
-      message: "OTP sent successfully"
+      message: "OTP sent successfully" 
     });
 
   } catch (error) {
-    console.error('[OTP CRITICAL FAILURE]', {
+    console.error('[OTP ULTIMATE FAILURE]', {
       error: error.message,
       email: normalizedEmail,
-      dbState: mongoose.connection.readyState,
-      dbHost: mongoose.connection.host,
-      time: new Date().toISOString()
+      dbTime: new Date(await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.localTime)),
+      mongodbVersion: await mongoose.connection.db.command({ buildInfo: 1 }).then(i => i.version),
+      storageEngine: await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.storageEngine.name)
     });
 
     return res.status(500).json({ 
       success: false, 
       message: "Failed to process OTP request",
-      systemError: process.env.NODE_ENV === 'development' ? error.message : undefined
+      systemStatus: "Please contact support with the request timestamp"
     });
   }
 });
 
-// Nuclear verification endpoint
-router.get("/nuclear-verify/:email", async (req, res) => {
+// Ultimate verification endpoint
+router.get("/ultimate-verify/:email", async (req, res) => {
   try {
-    // Check all possible ways
-    const mongooseUser = await User.findOne({ email: req.params.email }).lean();
-    const nativeUser = await mongoose.connection.db.collection('users').findOne(
-      { email: req.params.email }
-    );
-    const rawDb = await mongoose.connection.db.admin().command({
+    const result = await mongoose.connection.db.command({
       find: "users",
       filter: { email: req.params.email },
+      projection: { otpData: 1 },
       limit: 1
     });
 
+    const doc = result.cursor.firstBatch[0];
     return res.json({
       success: true,
-      mongoose: mongooseUser?.otp,
-      nativeDriver: nativeUser?.otp,
-      rawDatabase: rawDb?.cursor?.firstBatch[0]?.otp,
-      consistent: (
-        mongooseUser?.otp === nativeUser?.otp && 
-        nativeUser?.otp === rawDb?.cursor?.firstBatch[0]?.otp
-      ),
-      timestamp: new Date()
+      otpExists: !!doc?.otpData?.code,
+      otp: doc?.otpData?.code,
+      expiresAt: doc?.otpData?.expiresAt,
+      storageEngine: await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.storageEngine.name),
+      mongodbVersion: await mongoose.connection.db.command({ buildInfo: 1 }).then(i => i.version),
+      serverTime: new Date(await mongoose.connection.db.command({ serverStatus: 1 }).then(s => s.localTime))
     });
   } catch (error) {
     return res.status(500).json({ 
