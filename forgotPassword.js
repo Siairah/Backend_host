@@ -28,7 +28,14 @@ router.post("/", async (req, res) => {
 
     user.otp = otp;
     user.otpExpiresAt = expiresAt;
-    await user.save();
+    try {
+  await user.save();
+  console.log(`[SUCCESS] OTP saved for ${normalizedEmail}`);
+} catch (saveError) {
+  console.error("[ERROR] Failed to save OTP to user:", saveError);
+  return res.status(500).json({ success: false, message: "Failed to save OTP" });
+}
+
 
     console.log(`[SUCCESS] OTP generated and saved for ${normalizedEmail}: ${otp} (expires at ${expiresAt.toISOString()})`);
 
