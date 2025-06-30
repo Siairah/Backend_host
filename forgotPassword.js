@@ -1,54 +1,47 @@
 const express = require("express");
 const crypto = require("crypto");
-const mongoose = require("mongoose"); // Add this line
+const mongoose = require("mongoose");
 const sendOtpEmail = require("./sendOtpEmail");
 const User = require("./models");
 
 const router = express.Router();
 
-// Atomic OTP generation and save
+// Simple, reliable OTP generation
 async function generateAndSaveOTP(email) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  
-  try {
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const otp = crypto.randomInt(100000, 999999).toString();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    const result = await User.updateOne(
-      { email: email },
-      { 
-        $set: { 
-          otp: otp,
-          otpExpiresAt: expiresAt 
-        } 
-      },
-      { 
-        session,
-        runValidators: true,
-        strict: true
-      }
-    );
-
-    if (result.modifiedCount === 0) {
-      throw new Error("No document was modified");
+  // Direct update without transaction
+  const result = await User.updateOne(
+    { email: email },
+    { 
+      $set: { 
+        otp: otp,
+        otpExpiresAt: expiresAt 
+      } 
+    },
+    { 
+      runValidators: true,
+      strict: true
     }
+  );
 
-    // Verify immediately in the same transaction
-    const user = await User.findOne({ email }).session(session).lean();
-    if (!user || user.otp !== otp) {
-      throw new Error("OTP verification failed within transaction");
-    }
-
-    await session.commitTransaction();
-    return { otp, expiresAt };
-
-  } catch (error) {
-    await session.abortTransaction();
-    throw error;
-  } finally {
-    session.endSession();
+  if (result.modifiedCount === 0) {
+    throw new Error("No document was modified");
   }
+
+  // Verify with fresh read
+  const user = await User.findOne({ email }).lean();
+  if (!user || user.otp !== otp) {
+    console.error('OTP verification failed:', {
+      expected: otp,
+      actual: user?.otp,
+      userExists: !!user
+    });
+    throw new Error("OTP not persisted correctly");
+  }
+
+  return { otp, expiresAt };
 }
 
 router.post("/", async (req, res) => {
@@ -67,11 +60,11 @@ router.post("/", async (req, res) => {
       throw new Error("Database not connected");
     }
 
-    // Generate and save OTP atomically
+    // Generate and save OTP
     const { otp, expiresAt } = await generateAndSaveOTP(normalizedEmail);
     console.log(`[OTP SUCCESS] Generated for ${normalizedEmail}: ${otp}`);
 
-    // Send email (outside transaction)
+    // Send email
     await sendOtpEmail(normalizedEmail, otp);
 
     return res.status(200).json({ 
@@ -86,9 +79,10 @@ router.post("/", async (req, res) => {
   } catch (error) {
     console.error('[OTP FAILURE]', {
       error: error.message,
-      stack: error.stack,
       email: normalizedEmail,
-      time: new Date()
+      time: new Date(),
+      dbState: mongoose.connection.readyState,
+      dbHost: mongoose.connection.host
     });
 
     return res.status(500).json({ 
@@ -102,17 +96,17 @@ router.post("/", async (req, res) => {
 // Direct database verification endpoint
 router.get("/verify-db/:email", async (req, res) => {
   try {
-    const collection = mongoose.connection.db.collection('users');
-    const user = await collection.findOne(
+    const user = await User.findOne(
       { email: req.params.email },
-      { projection: { otp: 1, otpExpiresAt: 1 } }
-    );
+      { otp: 1, otpExpiresAt: 1 }
+    ).lean();
     
     return res.json({
       exists: !!user,
       otp: user?.otp,
       expiry: user?.otpExpiresAt,
-      rawData: user
+      now: new Date(),
+      isValid: user?.otpExpiresAt ? new Date() < new Date(user.otpExpiresAt) : false
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
