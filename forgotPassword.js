@@ -15,26 +15,27 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const normalizedEmail = email.toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Optional: delete old OTP before generating new one
-    if (otpStore.has(email)) {
-      otpStore.delete(email);
+    // Delete old OTP if exists
+    if (otpStore.has(normalizedEmail)) {
+      otpStore.delete(normalizedEmail);
     }
 
     const otp = crypto.randomInt(100000, 999999).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes from now
 
-    otpStore.set(email, { code: otp, expiresAt });
+    otpStore.set(normalizedEmail, { code: otp, expiresAt });
 
-    console.log("Found user:", user.email);
-    console.log("Generated OTP:", otp);
+    console.log("Stored OTP for:", normalizedEmail, "OTP:", otp, "Expires at:", new Date(expiresAt));
+    console.log("Current OTP Store:", Array.from(otpStore.entries()));
 
-    await sendOtpEmail(email, otp);
+    await sendOtpEmail(normalizedEmail, otp);
 
     return res.status(200).json({ success: true, message: "OTP sent to email" });
   } catch (error) {
@@ -46,20 +47,26 @@ router.post("/", async (req, res) => {
 // Verify OTP
 router.post("/verify", (req, res) => {
   const { email, otp } = req.body;
+  const normalizedEmail = email.toLowerCase();
+  
+  console.log("Current OTP Store:", Array.from(otpStore.entries()));
+  console.log("Verification attempt for:", normalizedEmail, "with OTP:", otp);
 
   if (!email || !otp) {
     return res.status(400).json({ success: false, message: "Email and OTP are required" });
   }
 
-  const record = otpStore.get(email);
+  const record = otpStore.get(normalizedEmail);
   if (!record) {
     return res.status(400).json({ success: false, message: "OTP not found or expired" });
   }
 
   const { code, expiresAt } = record;
 
+  console.log("Current time:", new Date(), "Expiry time:", new Date(expiresAt));
+
   if (Date.now() > expiresAt) {
-    otpStore.delete(email);
+    otpStore.delete(normalizedEmail);
     return res.status(400).json({ success: false, message: "OTP expired" });
   }
 
@@ -67,7 +74,7 @@ router.post("/verify", (req, res) => {
     return res.status(400).json({ success: false, message: "Invalid OTP" });
   }
 
-  otpStore.delete(email); // One-time use
+  otpStore.delete(normalizedEmail);
   return res.json({ success: true, message: "OTP verified successfully" });
 });
 
