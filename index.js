@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 const signupRoute = require("./signup");
 const loginRoute = require("./login");
 const forgotPasswordRoute = require("./forgotPassword"); // ✅ OTP route
+const verifyOtpRoute = require("./verifyOtp"); // ✅ Verify OTP route
 
 const app = express();
 app.use(express.json());
@@ -36,6 +37,10 @@ app.use("/forgot-password", (req, res, next) => {
   console.log("📥 POST /forgot-password hit");
   next();
 }, forgotPasswordRoute);
+app.use("/verify-otp", (req, res, next) => {
+  console.log("📥 POST /verify-otp hit");
+  next();
+}, verifyOtpRoute);
 
 // Server
 const PORT = process.env.PORT || 3000;
