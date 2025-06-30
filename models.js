@@ -5,6 +5,8 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   phone: String,
+  otp: String, // For OTP verification
+  otpExpiresAt: Date, // For OTP expiration
 });
 
 // ✅ Avoid OverwriteModelError
