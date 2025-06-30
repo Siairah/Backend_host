@@ -1,8 +1,8 @@
 // routes/forgotPassword.js
 const express = require("express");
 const crypto = require("crypto");
-const sendOtpEmail = require("../sendOtpEmail");
-const User = require("../models/User");
+const sendOtpEmail = require("./sendOtpEmail");
+const User = require("./models");
 
 const router = express.Router();
 
