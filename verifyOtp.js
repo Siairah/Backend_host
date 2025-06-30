@@ -14,6 +14,9 @@ router.post("/", async (req, res) => {
   try {
     const normalizedEmail = email.toLowerCase();
     const user = await User.findOne({ email: normalizedEmail });
+    console.log("User OTP:", user.otp);
+console.log("User OTP expiry:", user.otpExpiresAt);
+
 
     if (!user || !user.otp || !user.otpExpiresAt) {
       return res.status(400).json({ success: false, message: "OTP not found or expired" });
