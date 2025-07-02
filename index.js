@@ -5,6 +5,7 @@ const signupRoute = require("./signup");
 const loginRoute = require("./login");
 const forgotPasswordRoute = require("./forgotPassword"); // ✅ OTP route
 const verifyOtpRoute = require("./verifyOtp"); // ✅ Verify OTP route
+const resetPasswordRoute = require("./resetPassword"); // ✅ Reset password route
 
 const app = express();
 app.use(express.json());
@@ -41,6 +42,10 @@ app.use("/verify-otp", (req, res, next) => {
   console.log("📥 POST /verify-otp hit");
   next();
 }, verifyOtpRoute);
+app.use("/reset-password", (req, res, next) => {
+  console.log("📥 POST /reset-password hit");
+  next();
+}, resetPasswordRoute); // Reset password route
 
 // Server
 const PORT = process.env.PORT || 3000;
