@@ -1,9 +1,11 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs"); // or use bcrypt
-const User = require("./models");
+import { Router } from "express";
+import mongoose from "mongoose";
+const { connection } = mongoose;
 
-const router = express.Router();
+import { hash } from "bcryptjs"; // or use bcrypt
+import { User } from "./models/index.js"; // Adjust the path as necessary
+
+const router = Router();
 
 router.post("/", async (req, res) => {
   const { email, password } = req.body;
@@ -19,7 +21,7 @@ router.post("/", async (req, res) => {
   const normalizedEmail = email.toLowerCase().trim();
 
   try {
-    const collection = mongoose.connection.db.collection("users");
+    const collection = connection.db.collection("users");
 
     // Check if user exists
     const user = await collection.findOne({ email: normalizedEmail });
@@ -33,7 +35,7 @@ router.post("/", async (req, res) => {
     }
 
     // Hash the new password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await hash(password, 10);
 
     // Update the password and remove OTP fields
     await collection.updateOne(
@@ -66,4 +68,4 @@ router.post("/", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

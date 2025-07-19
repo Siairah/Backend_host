@@ -1,8 +1,10 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const User = require("./models");
+import { Router } from "express";
+import mongoose from "mongoose";
+const { connection } = mongoose;
 
-const router = express.Router();
+import { User } from "./models/index.js"; // Adjust the path as necessary
+
+const router = Router();
 
 router.post("/", async (req, res) => {
   const { email, otp } = req.body;
@@ -19,7 +21,7 @@ router.post("/", async (req, res) => {
   console.log(`[OTP VERIFY] Attempt for ${normalizedEmail} with OTP: ${otp}`);
 
   try {
-    const collection = mongoose.connection.db.collection('users');
+    const collection = connection.db.collection('users');
     
     // First check for valid, unexpired OTP
     const user = await collection.findOne({
@@ -86,4 +88,4 @@ router.post("/", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

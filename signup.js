@@ -1,10 +1,12 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+import { Router } from "express";
+import mongoose from "mongoose";
+const { Schema, model } = mongoose;
 
-const router = express.Router();
+import { hash } from "bcrypt";
 
-const userSchema = new mongoose.Schema({
+const router = Router();
+
+const userSchema = new Schema({
   fullName: { type: String, required: true },
   phone: {
     type: String,
@@ -27,7 +29,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
 });
 
-const User = mongoose.model("User", userSchema);
+import { User } from "./models/index.js"; 
 
 router.post("/", async (req, res) => {
   const { fullName, phone, email, password } = req.body;
@@ -46,7 +48,7 @@ router.post("/", async (req, res) => {
 
     // Hash the password
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await hash(password, saltRounds);
 
     const newUser = new User({
       fullName,
@@ -75,4 +77,4 @@ router.post("/", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

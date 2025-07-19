@@ -1,15 +1,16 @@
-const express = require("express");
-const crypto = require("crypto");
-const mongoose = require("mongoose");
-const sendOtpEmail = require("./sendOtpEmail");
-const User = require("./models");
+import { Router } from "express";
+import { randomInt } from "crypto";
+import mongoose from "mongoose";
+const { connection } = mongoose;
 
-const router = express.Router();
+import sendOtpEmail from "./sendOtpEmail.js";
+
+const router = Router();
 
 async function saveOTP(email, otp, expiresAt) {
   // Method 1: Try native driver first
   try {
-    const result = await mongoose.connection.db.collection('users').updateOne(
+    const result = await connection.db.collection('users').updateOne(
       { email: email },
       { $set: { otp: otp, otpExpiresAt: expiresAt } },
       { upsert: false }
@@ -24,7 +25,7 @@ async function saveOTP(email, otp, expiresAt) {
 
   // Method 2: Fallback to Mongoose
   try {
-    await User.findOneAndUpdate(
+    await findOneAndUpdate(
       { email: email },
       { otp: otp, otpExpiresAt: expiresAt },
       { runValidators: true, context: 'query' }
@@ -48,14 +49,14 @@ router.post("/", async (req, res) => {
 
   try {
     // Generate OTP
-    const otp = crypto.randomInt(100000, 999999).toString();
+    const otp = randomInt(100000, 999999).toString();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
     // Persist OTP
     await saveOTP(normalizedEmail, otp, expiresAt);
 
     // Verify persistence
-    const user = await mongoose.connection.db.collection('users').findOne(
+    const user = await connection.db.collection('users').findOne(
       { email: normalizedEmail },
       { projection: { otp: 1, otpExpiresAt: 1 } }
     );
@@ -77,8 +78,8 @@ router.post("/", async (req, res) => {
       error: error.message,
       email: normalizedEmail,
       time: new Date(),
-      dbState: mongoose.connection.readyState,
-      dbHost: mongoose.connection.host
+      dbState: connection.readyState,
+      dbHost: connection.host
     });
 
     return res.status(500).json({ 
@@ -90,7 +91,7 @@ router.post("/", async (req, res) => {
 
 router.get("/verify-otp/:email", async (req, res) => {
   try {
-    const user = await mongoose.connection.db.collection('users').findOne(
+    const user = await connection.db.collection('users').findOne(
       { email: req.params.email },
       { projection: { otp: 1, otpExpiresAt: 1 } }
     );
@@ -107,4 +108,4 @@ router.get("/verify-otp/:email", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

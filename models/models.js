@@ -1,6 +1,8 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
-const userSchema = new mongoose.Schema({
+const { Schema, model, models } = mongoose;
+
+const userSchema = new Schema({
   fullName: String,
   email: { 
     type: String, 
@@ -28,9 +30,9 @@ const userSchema = new mongoose.Schema({
 });
 
 // Create model only once
-if (mongoose.models.User) {
-  delete mongoose.models.User;
+if (models.User) {
+  delete models.User;
 }
-const User = mongoose.model("User", userSchema);
+const User = model("User", userSchema);
 
-module.exports = User;
+export default User;

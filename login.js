@@ -1,11 +1,13 @@
-const express = require("express");
-const mongoose = require("mongoose");
-const bcrypt = require("bcrypt");
+import { Router } from "express";
+import mongoose from "mongoose";
+const { connection } = mongoose;
 
-const router = express.Router();
+import { compare } from "bcrypt";
+
+const router = Router();
 
 // Reuse your existing User model
-const User = mongoose.model("User");
+import { User } from "./models/index.js"; 
 
 // POST /login
 router.post("/", async (req, res) => {
@@ -23,7 +25,7 @@ router.post("/", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
@@ -44,4 +46,4 @@ router.post("/", async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

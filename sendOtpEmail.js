@@ -1,5 +1,5 @@
-const nodemailer = require("nodemailer");
-require("dotenv").config();
+import { createTransport } from "nodemailer";
+import "dotenv/config"; // Ensure environment variables are loaded
 
 // Debug print environment variables
 console.log("MAILTRAP_HOST:", process.env.MAILTRAP_HOST);
@@ -7,7 +7,7 @@ console.log("MAILTRAP_PORT:", process.env.MAILTRAP_PORT);
 console.log("MAILTRAP_USER:", process.env.MAILTRAP_USER);
 console.log("MAILTRAP_PASS:", process.env.MAILTRAP_PASS ? "****" : undefined);
 
-const transporter = nodemailer.createTransport({
+const transporter = createTransport({
   host: process.env.MAILTRAP_HOST,
   port: Number(process.env.MAILTRAP_PORT), // make sure port is a number
   auth: {
@@ -58,4 +58,4 @@ const sendOtpEmail = async (email, otp) => {
   }
 };
 
-module.exports = sendOtpEmail;
+export default sendOtpEmail;
