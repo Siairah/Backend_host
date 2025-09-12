@@ -1,7 +1,6 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 const { connection } = mongoose;
-
 import { hash } from "bcryptjs"; // or use bcrypt
 import { User } from "./models/index.js"; // Adjust the path as necessary
 

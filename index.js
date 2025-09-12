@@ -1,6 +1,6 @@
 import express, { json } from "express";
 import mongoose from "mongoose";
-const { connection } = mongoose;
+import cors from "cors"; // ⬅️ add this
 
 import signupRoute from "./signup.js";
 import loginRoute from "./login.js";
@@ -12,12 +12,23 @@ import categoryRoute from "./category.js";
 const app = express();
 app.use(json());
 
-// MongoDB connection
-const mongoURI = "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
+// ✅ enable CORS
+app.use(cors({
+  origin: [
+    "http://localhost:3000",         // dev frontend
+    "https://backend-host-wgti.onrender.com" // deployed frontend
+  ],
+  credentials: true,
+}));
 
-mongoose.connect(mongoURI)
+// MongoDB connection
+const mongoURI =
+  "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
+
+mongoose
+  .connect(mongoURI)
   .then(() => console.log("✅ MongoDB connected"))
-  .catch(err => console.error("❌ MongoDB connection error:", err));
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // Root test route
 app.get("/", (req, res) => {
@@ -26,35 +37,12 @@ app.get("/", (req, res) => {
 });
 
 // Auth routes
-app.use("/signup", (req, res, next) => {
-  console.log("📥 POST /signup hit");
-  next();
-}, signupRoute);
-
-app.use("/login", (req, res, next) => {
-  console.log("📥 POST /login hit");
-  next();
-}, loginRoute);
-
-app.use("/forgot-password", (req, res, next) => {
-  console.log("📥 POST /forgot-password hit");
-  next();
-}, forgotPasswordRoute);
-
-app.use("/verify-otp", (req, res, next) => {
-  console.log("📥 POST /verify-otp hit");
-  next();
-}, verifyOtpRoute);
-
-app.use("/reset-password", (req, res, next) => {
-  console.log("📥 POST /reset-password hit");
-  next();
-}, resetPasswordRoute);
-
-app.use("/category", (req, res, next) => {
-  console.log("📥 POST /category hit");
-  next();
-}, categoryRoute);
+app.use("/signup", signupRoute);
+app.use("/login", loginRoute);
+app.use("/forgot-password", forgotPasswordRoute);
+app.use("/verify-otp", verifyOtpRoute);
+app.use("/reset-password", resetPasswordRoute);
+app.use("/category", categoryRoute);
 
 // Server
 const PORT = process.env.PORT || 3000;
