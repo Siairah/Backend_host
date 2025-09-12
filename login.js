@@ -1,18 +1,13 @@
 import { Router } from "express";
-import mongoose from "mongoose";
-const { connection } = mongoose;
-
 import { compare } from "bcrypt";
+import jwt from "jsonwebtoken";
+import { User } from "./models/index.js"; 
 
 const router = Router();
-
-// Reuse your existing User model
-import { User } from "./models/index.js"; 
 
 // POST /login
 router.post("/", async (req, res) => {
   const { email, password } = req.body;
-
   console.log("Login attempt:", req.body);
 
   if (!email || !password) {
@@ -30,9 +25,17 @@ router.post("/", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
 
+    // 🔹 Generate JWT token
+    const token = jwt.sign(
+      { id: user._id, email: user.email },
+      process.env.JWT_SECRET || "supersecretkey",
+      { expiresIn: "1d" }
+    );
+
     return res.status(200).json({
       success: true,
       message: "Login successful",
+      token, // ⬅️ send token to frontend
       user: {
         id: user._id,
         fullName: user.fullName,

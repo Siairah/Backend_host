@@ -1,6 +1,6 @@
 import express, { json } from "express";
 import mongoose from "mongoose";
-import cors from "cors"; // ⬅️ add this
+import cors from "cors";
 
 import signupRoute from "./signup.js";
 import loginRoute from "./login.js";
@@ -12,10 +12,10 @@ import categoryRoute from "./category.js";
 const app = express();
 app.use(json());
 
-// ✅ enable CORS
+// ✅ CORS
 app.use(cors({
   origin: [
-    "http://localhost:3000",         // dev frontend
+    "http://localhost:3000",             // dev frontend
     "https://backend-host-wgti.onrender.com" // deployed frontend
   ],
   credentials: true,
@@ -25,16 +25,12 @@ app.use(cors({
 const mongoURI =
   "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
 
-mongoose
-  .connect(mongoURI)
+mongoose.connect(mongoURI)
   .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 
 // Root test route
-app.get("/", (req, res) => {
-  console.log("📥 GET / hit");
-  res.send("Backend is working");
-});
+app.get("/", (req, res) => res.send("Backend is working"));
 
 // Auth routes
 app.use("/signup", signupRoute);
@@ -46,6 +42,4 @@ app.use("/category", categoryRoute);
 
 // Server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
