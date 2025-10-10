@@ -2,12 +2,24 @@ import express, { json } from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 
-import signupRoute from "./signup.js";
+// Active routes used in frontend
 import loginRoute from "./login.js";
 import forgotPasswordRoute from "./forgotPassword.js";
-import verifyOtpRoute from "./verifyOtp.js";
 import resetPasswordRoute from "./resetPassword.js";
-import categoryRoute from "./category.js";
+import profileSetupRoute from "./profileSetup.js";
+import sendOtpOnlyRoute from "./sendOtpOnly.js";
+import checkEmailRoute from "./checkEmail.js";
+import completeRegistrationRoute from "./completeRegistration.js";
+import getUserProfileRoute from "./getUserProfile.js";
+import testProfileRoute from "./testProfile.js";
+
+// Post, Circle, Like, Comment routes (Django logic)
+import createPostRoute from "./createPost.js";
+import getPostsRoute from "./getPosts.js";
+import toggleLikeRoute from "./toggleLike.js";
+import addCommentRoute from "./addComment.js";
+import circleRoutes from "./circleRoutes.js";
+import chatRoutes from "./chatRoutes.js";
 
 const app = express();
 app.use(json());
@@ -21,9 +33,10 @@ app.use(cors({
   credentials: true,
 }));
 
-// MongoDB connection
-const mongoURI =
-  "mongodb+srv://sisir:sharma@cluster0.zbk23.mongodb.net/myDatabase?retryWrites=true&w=majority&appName=Cluster0";
+import dotenv from 'dotenv';
+dotenv.config();
+
+const mongoURI = process.env.MONGODB_URI;
 
 mongoose.connect(mongoURI)
   .then(() => console.log("✅ MongoDB connected"))
@@ -32,14 +45,36 @@ mongoose.connect(mongoURI)
 // Root test route
 app.get("/", (req, res) => res.send("Backend is working"));
 
-// Auth routes
-app.use("/signup", signupRoute);
+// Authentication & Registration Routes
+app.use("/check-email", checkEmailRoute);
+app.use("/send-otp", sendOtpOnlyRoute);
+app.use("/complete-registration", completeRegistrationRoute);
 app.use("/login", loginRoute);
+
+// Password Reset Routes
 app.use("/forgot-password", forgotPasswordRoute);
-app.use("/verify-otp", verifyOtpRoute);
 app.use("/reset-password", resetPasswordRoute);
-app.use("/category", categoryRoute);
+
+// Profile Management Routes
+app.use("/profile-setup", profileSetupRoute);
+app.use("/get-user-profile", getUserProfileRoute);
+
+// Post Management Routes (Django logic)
+app.use("/create-post", createPostRoute);
+app.use("/get-posts", getPostsRoute);
+app.use("/toggle-like", toggleLikeRoute);
+app.use("/add-comment", addCommentRoute);
+app.use("/get-comments", addCommentRoute);
+
+// Circle Management Routes (Django logic)
+app.use("/circles", circleRoutes);
+
+// Chat Management Routes (Django logic)
+app.use("/chat", chatRoutes);
+
+// Debug/Test Route
+app.use("/test-profile", testProfileRoute);
 
 // Server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

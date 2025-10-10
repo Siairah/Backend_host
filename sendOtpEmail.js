@@ -27,34 +27,81 @@ transporter.verify(function (error, success) {
 
 const sendOtpEmail = async (email, otp) => {
   const htmlContent = `
-    <div style="background: #f0f4f8; padding: 30px; font-family: Arial, sans-serif;">
-      <div style="max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0px 2px 8px rgba(0,0,0,0.1);">
-        <h2 style="text-align: center; color: #007bff;">🔐 OTP Code for Password Reset</h2>
-        <p>Hello,</p>
-        <p>Your OTP code is valid for <strong>5 minutes</strong>:</p>
-        <div style="font-size: 28px; text-align: center; margin: 20px 0; font-weight: bold; color: #007bff;">
-          ${otp}
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Password Reset OTP</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+        <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #6a14eb, #8a2be2); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
+                <h1 style="color: white; margin: 0; font-size: 28px;">
+                    <i style="margin-right: 10px;">🔐</i>Password Reset
+                </h1>
+                <p style="color: white; margin: 10px 0 0 0; font-size: 16px;">Chautari Social Platform</p>
+            </div>
+            
+            <div style="background: white; padding: 40px; border-radius: 0 0 12px 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);">
+                <h2 style="color: #333; margin-bottom: 20px; text-align: center;">Reset Your Password</h2>
+                
+                <p style="color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+                    Hello,
+                </p>
+                
+                <p style="color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 30px;">
+                    You requested to reset your password. Use the verification code below to proceed:
+                </p>
+                
+                <div style="background: linear-gradient(135deg, #6a14eb, #8a2be2); color: white; padding: 20px; border-radius: 12px; text-align: center; margin: 30px 0;">
+                    <p style="margin: 0 0 10px 0; font-size: 14px; opacity: 0.9;">Your verification code:</p>
+                    <div style="font-size: 36px; font-weight: bold; letter-spacing: 8px; margin: 0;">
+                        ${otp}
+                    </div>
+                </div>
+                
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 30px 0;">
+                    <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">
+                        <strong>⏰ This code expires in 5 minutes</strong>
+                    </p>
+                    <p style="margin: 0; color: #666; font-size: 14px;">
+                        Please do not share this code with anyone.
+                    </p>
+                </div>
+                
+                <p style="color: #666; font-size: 14px; line-height: 1.6; margin-bottom: 30px;">
+                    If you didn't request this password reset, please ignore this email. Your account remains secure.
+                </p>
+                
+                <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
+                
+                <div style="text-align: center;">
+                    <p style="color: #999; font-size: 12px; margin: 0;">
+                        This email was sent from Chautari Social Platform<br>
+                        If you have any questions, please contact our support team.
+                    </p>
+                </div>
+            </div>
         </div>
-        <p>Please do not share this code with anyone.</p>
-        <p style="font-size: 12px; color: gray;">If you didn’t request this, ignore this email.</p>
-        <p style="text-align: right;">— Your App Team</p>
-      </div>
-    </div>
+    </body>
+    </html>
   `;
 
   const mailOptions = {
-    from: '"Your App" <no-reply@yourapp.com>',
+    from: '"Chautari" <no-reply@chautari.com>',
     to: email,
-    subject: "Your OTP Code (valid for 5 minutes)",
+    subject: "🔐 Password Reset Verification Code - Chautari",
     html: htmlContent,
   };
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`OTP email sent to ${email}`);
+    console.log(`✅ OTP email sent successfully to ${email}`);
+    return true;
   } catch (error) {
-    console.error("Failed to send OTP email:", error);
-    throw error; // rethrow so calling code can handle it
+    console.error("❌ Failed to send OTP email:", error);
+    throw error;
   }
 };
 

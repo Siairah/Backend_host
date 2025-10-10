@@ -12,7 +12,7 @@ async function saveOTP(email, otp, expiresAt) {
   try {
     const result = await connection.db.collection('users').updateOne(
       { email: email },
-      { $set: { otp: otp, otpExpiresAt: expiresAt } },
+      { $set: { otp: otp, otpExpiresAt: expiresAt, otpCreatedAt: new Date() } },
       { upsert: false }
     );
     
@@ -25,10 +25,10 @@ async function saveOTP(email, otp, expiresAt) {
 
   // Method 2: Fallback to Mongoose
   try {
-    await findOneAndUpdate(
+    await connection.db.collection('users').findOneAndUpdate(
       { email: email },
-      { otp: otp, otpExpiresAt: expiresAt },
-      { runValidators: true, context: 'query' }
+      { $set: { otp: otp, otpExpiresAt: expiresAt, otpCreatedAt: new Date() } },
+      { returnDocument: 'after' }
     );
     return true;
   } catch (mongooseError) {
@@ -41,70 +41,132 @@ router.post("/", async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
-    return res.status(400).json({ success: false, message: "Email required" });
+    return res.status(400).json({ 
+      success: false, 
+      message: "Email is required" 
+    });
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  console.log(`[OTP] Request for ${normalizedEmail}`);
+  console.log(`[FORGOT PASSWORD] Request for ${normalizedEmail}`);
 
   try {
-    // Generate OTP
-    const otp = randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-    // Persist OTP
-    await saveOTP(normalizedEmail, otp, expiresAt);
-
-    // Verify persistence
+    // Check if user exists
     const user = await connection.db.collection('users').findOne(
       { email: normalizedEmail },
-      { projection: { otp: 1, otpExpiresAt: 1 } }
+      { projection: { email: 1, isUser: 1 } }
     );
 
-    if (!user || user.otp !== otp) {
-      throw new Error('OTP verification failed after save');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found with that email address"
+      });
     }
 
-    // Send email
+    // Generate 6-digit OTP
+    const otp = randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    // Save OTP to database
+    await saveOTP(normalizedEmail, otp, expiresAt);
+
+    // Send OTP email
     await sendOtpEmail(normalizedEmail, otp);
+
+    console.log(`[FORGOT PASSWORD] OTP sent successfully to ${normalizedEmail}`);
 
     return res.status(200).json({ 
       success: true, 
-      message: "OTP sent successfully"
+      message: "Verification code sent to your email address",
+      email: normalizedEmail // Include email for frontend navigation
     });
 
   } catch (error) {
-    console.error('[OTP FINAL ERROR]', {
+    console.error('[FORGOT PASSWORD ERROR]', {
       error: error.message,
       email: normalizedEmail,
       time: new Date(),
-      dbState: connection.readyState,
-      dbHost: connection.host
+      stack: error.stack
     });
 
     return res.status(500).json({ 
       success: false, 
-      message: "Failed to process OTP request"
+      message: "Failed to send verification code. Please try again later."
     });
   }
 });
 
-router.get("/verify-otp/:email", async (req, res) => {
+// Verify OTP for password reset
+router.post("/verify-otp", async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return res.status(400).json({
+      success: false,
+      message: "Email and OTP are required"
+    });
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  console.log(`[VERIFY OTP] Attempt for ${normalizedEmail}`);
+
   try {
     const user = await connection.db.collection('users').findOne(
-      { email: req.params.email },
-      { projection: { otp: 1, otpExpiresAt: 1 } }
+      { email: normalizedEmail },
+      { projection: { otp: 1, otpExpiresAt: 1, email: 1 } }
     );
-    
-    return res.json({
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    if (!user.otp || !user.otpExpiresAt) {
+      return res.status(400).json({
+        success: false,
+        message: "No OTP found for this user"
+      });
+    }
+
+    // Check if OTP is expired
+    const now = new Date();
+    if (now > user.otpExpiresAt) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired. Please request a new one."
+      });
+    }
+
+    // Check if OTP matches
+    if (user.otp !== otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP. Please check and try again."
+      });
+    }
+
+    console.log(`[VERIFY OTP] OTP verified successfully for ${normalizedEmail}`);
+
+    return res.status(200).json({
       success: true,
-      otp: user?.otp,
-      expiresAt: user?.otpExpiresAt,
-      isValid: user?.otpExpiresAt ? new Date() < user.otpExpiresAt : false,
-      now: new Date()
+      message: "OTP verified successfully",
+      email: normalizedEmail
     });
+
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    console.error('[VERIFY OTP ERROR]', {
+      error: error.message,
+      email: normalizedEmail,
+      time: new Date()
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to verify OTP. Please try again."
+    });
   }
 });
 

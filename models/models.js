@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 const { Schema, model, models } = mongoose;
 
 const userSchema = new Schema({
-  fullName: String,
   email: { 
     type: String, 
     required: true, 
@@ -13,6 +12,7 @@ const userSchema = new Schema({
   },
   password: { type: String, required: true },
   phone: String,
+  isActive: { type: Boolean, default: false },
   otp: {
     type: String,
     validate: {
