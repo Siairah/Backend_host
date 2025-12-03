@@ -8,7 +8,6 @@ import User from "./models/models.js";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// POST /create-post (Django logic)
 router.post("/", upload.array("media", 10), async (req, res) => {
   try {
     const { user_id, circle_id, content } = req.body;
@@ -24,7 +23,6 @@ router.post("/", upload.array("media", 10), async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // Django logic: Check circle membership
     let is_approved = false;
     if (circle_id) {
       const circle = await Circle.findById(circle_id);
@@ -36,8 +34,6 @@ router.post("/", upload.array("media", 10), async (req, res) => {
       if (!membership) {
         return res.status(403).json({ success: false, message: "You must be a member of this circle" });
       }
-
-      // Auto-approve if admin (Django logic)
       is_approved = membership.is_admin;
     }
 
