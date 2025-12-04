@@ -1,25 +1,41 @@
 import { Router } from "express";
 import { Post, PostMedia, Like, Comment } from "./models/post.js";
 import Profile from "./models/profile.js";
+import { CircleMembership } from "./models/circle.js";
 
 const router = Router();
 
-// GET /get-posts (Django logic: only approved posts)
+
 router.get("/", async (req, res) => {
   try {
     const { circle_id, user_id } = req.query;
     
-    let query = { is_approved: true }; // Django logic: only approved
+    let query = { is_approved: true };
     
     if (circle_id) {
       query.circle = circle_id;
+    } else if (user_id) {
+      const joinedCircles = await CircleMembership.find({ user: user_id }).select('circle');
+      const joinedCircleIds = joinedCircles.map(m => m.circle);
+      
+      if (joinedCircleIds.length === 0) {
+        // User hasn't joined any circles, return empty array
+        return res.json({ success: true, posts: [] });
+      }
+      
+      query.circle = { $in: joinedCircleIds }; // Only posts from joined circles
     }
 
-    const posts = await Post.find(query)
+    let posts = await Post.find(query)
       .populate('user')
       .populate('circle')
       .sort({ createdAt: -1 })
       .limit(50);
+
+    //Shuffle posts randomly for mixed feed
+    if (!circle_id && user_id) {
+      posts = posts.sort(() => Math.random() - 0.5);
+    }
 
     const postDetails = await Promise.all(posts.map(async (post) => {
       const profile = await Profile.findOne({ user: post.user._id });
@@ -52,7 +68,7 @@ router.get("/", async (req, res) => {
     return res.json({ success: true, posts: postDetails });
 
   } catch (error) {
-    console.error("❌ Get posts error:", error);
+    console.error(" Get posts error:", error);
     return res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
