@@ -53,7 +53,7 @@ router.post("/:post_id", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Add comment error:", error);
+    console.error(" Add comment error:", error);
     return res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
@@ -93,7 +93,7 @@ router.get("/:post_id", async (req, res) => {
     return res.json({ comments: comments_data });
 
   } catch (error) {
-    console.error("❌ Get comments error:", error);
+    console.error(" Get comments error:", error);
     return res.status(500).json({ success: false, message: "Server error: " + error.message });
   }
 });
