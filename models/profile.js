@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const { Schema, model, models } = mongoose;
 
-// Profile Schema - Separate from User (like Django)
+// Profile Schema - Separate from User
 const profileSchema = new Schema({
   user: {
     type: Schema.Types.ObjectId,
