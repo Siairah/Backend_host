@@ -2,6 +2,7 @@ import { Router } from "express";
 import { Post, Like } from "./models/post.js";
 import { Circle, CircleMembership } from "./models/circle.js";
 import Profile from "./models/profile.js";
+import { sendNotification } from "./utils/notifications.js";
 
 const router = Router();
 
@@ -19,7 +20,6 @@ router.post("/:post_id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    // Circle gate: private circles require membership; public allows any authenticated user
     if (post.circle) {
       const circle = await Circle.findById(post.circle);
       if (circle && circle.visibility === 'private') {
@@ -36,12 +36,26 @@ router.post("/:post_id", async (req, res) => {
     let liked = false;
 
     if (!like) {
-      // Create new like 
       like = await Like.create({ post: post_id, user: user_id });
       created = true;
       liked = true;
+
+      const postOwnerId = post.user._id.toString();
+      if (postOwnerId !== user_id && req.io) {
+        const senderProfile = await Profile.findOne({ user: user_id });
+        const senderName = senderProfile?.full_name || 'Someone';
+        
+        await sendNotification({
+          recipientId: postOwnerId,
+          senderId: user_id,
+          notificationType: 'like',
+          message: `${senderName} liked your post.`,
+          postId: post_id,
+          targetUrl: `/post/${post_id}`,
+          io: req.io
+        });
+      }
     } else {
-      // Delete existing like 
       await Like.deleteOne({ _id: like._id });
       liked = false;
     }
@@ -62,4 +76,3 @@ router.post("/:post_id", async (req, res) => {
 });
 
 export default router;
-
