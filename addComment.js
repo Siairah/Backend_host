@@ -2,10 +2,10 @@ import { Router } from "express";
 import { Post, Comment } from "./models/post.js";
 import { Circle, CircleMembership } from "./models/circle.js";
 import Profile from "./models/profile.js";
+import { sendNotification } from "./utils/notifications.js";
 
 const router = Router();
 
-// POST /add-comment/:post_id
 router.post("/:post_id", async (req, res) => {
   try {
     const { post_id } = req.params;
@@ -20,7 +20,6 @@ router.post("/:post_id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Post not found" });
     }
 
-    // Circle gate: private circles require membership; public allows any authenticated user
     if (post.circle) {
       const circle = await Circle.findById(post.circle);
       if (circle && circle.visibility === 'private') {
@@ -31,17 +30,30 @@ router.post("/:post_id", async (req, res) => {
       }
     }
 
-    // Django logic: Comment.objects.create(user=request.user, post=post, content=content)
     const comment = await Comment.create({
       post: post_id,
       user: user_id,
       content: content
     });
 
-    // Get user profile for response
     const profile = await Profile.findOne({ user: user_id });
     
     const commentCount = await Comment.countDocuments({ post: post_id, is_deleted: false });
+
+    const postOwnerId = post.user._id.toString();
+    if (postOwnerId !== user_id && req.io) {
+      const senderName = profile?.full_name || 'Someone';
+      
+      await sendNotification({
+        recipientId: postOwnerId,
+        senderId: user_id,
+        notificationType: 'comment',
+        message: `${senderName} commented on your post.`,
+        postId: post_id,
+        targetUrl: `/post/${post_id}`,
+        io: req.io
+      });
+    }
     
     return res.status(201).json({
       status: 'success',
@@ -58,20 +70,17 @@ router.post("/:post_id", async (req, res) => {
   }
 });
 
-// GET /get-comments/:post_id ( post.comments.all().order_by('-created_at'))
 router.get("/:post_id", async (req, res) => {
   try {
     const { post_id } = req.params;
 
-    //post.comments.all().order_by('-created_at')
     const comments = await Comment.find({ post: post_id, is_deleted: false })
       .populate('user')
-      .sort({ createdAt: -1 }); //  orders by -created_at (newest first)
+      .sort({ createdAt: -1 });
 
     const comments_data = await Promise.all(comments.map(async (comment) => {
       const profile = await Profile.findOne({ user: comment.user._id });
       
-      // 'created_at': comment.created_at.strftime('%b %d, %Y %I:%M %p')
       const created_at = new Date(comment.createdAt).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
@@ -99,4 +108,3 @@ router.get("/:post_id", async (req, res) => {
 });
 
 export default router;
-
