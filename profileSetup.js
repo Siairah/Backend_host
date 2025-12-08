@@ -78,7 +78,7 @@ router.post("/", upload.single("profile_pic"), async (req, res) => {
       console.log('ℹ️ No new file provided, keeping existing profile picture:', profilePicUrl);
     }
 
-    // Create or update Profile (separate from User like Django)
+    // Create or update Profile
     if (profile) {
       // Update existing profile - only update provided fields
       console.log('🔄 Updating existing profile...');
