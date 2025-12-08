@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const { Schema, model, models } = mongoose;
 
-// ChatRoom Model (Django pattern)
+// ChatRoom Model
 // For both group chats (inside circles) and one-on-one DMs
 const chatRoomSchema = new Schema({
   is_group: {
@@ -36,7 +36,7 @@ const chatRoomSchema = new Schema({
   collection: 'chat_rooms'
 });
 
-// ChatMessage Model (Django pattern)
+// ChatMessage Model
 const chatMessageSchema = new Schema({
   room: {
     type: Schema.Types.ObjectId,

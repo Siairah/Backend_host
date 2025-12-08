@@ -1,5 +1,16 @@
 import User from './models.js';
-import TravelCategory from './travelCategory.js';
 import Profile from './profile.js';
+import { Post, PostMedia, Comment, Like } from './post.js';
+import { Circle, CircleMembership, CircleJoinRequest } from './circle.js';
 
-export { User, TravelCategory, Profile };
+export { 
+  User, 
+  Profile, 
+  Post, 
+  PostMedia, 
+  Comment, 
+  Like,
+  Circle,
+  CircleMembership,
+  CircleJoinRequest
+};

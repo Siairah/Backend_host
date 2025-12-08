@@ -96,15 +96,82 @@ const likeSchema = new Schema({
 
 likeSchema.index({ post: 1, user: 1 }, { unique: true });
 
+const moderationQueueSchema = new Schema({
+  user: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  post: {
+    type: Schema.Types.ObjectId,
+    ref: 'Post',
+    required: true
+  },
+  image: {
+    type: String,
+    default: null
+  },
+  text: {
+    type: String,
+    default: ''
+  },
+  reason: {
+    type: String,
+    maxlength: 100,
+    required: true
+  },
+  reviewed_by_admin: {
+    type: Boolean,
+    default: false
+  },
+  reviewed_by_superadmin: {
+    type: Boolean,
+    default: false
+  }
+}, {
+  timestamps: true,
+  collection: 'moderation_queue'
+});
+
+const postReportSchema = new Schema({
+  post: {
+    type: Schema.Types.ObjectId,
+    ref: 'Post',
+    required: true
+  },
+  reported_by: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  reason: {
+    type: String,
+    required: true
+  },
+  resolved: {
+    type: Boolean,
+    default: false
+  }
+}, {
+  timestamps: true,
+  collection: 'post_reports'
+});
+
+postReportSchema.index({ post: 1, reported_by: 1 }, { unique: true });
+
 if (models.Post) delete models.Post;
 if (models.PostMedia) delete models.PostMedia;
 if (models.Comment) delete models.Comment;
 if (models.Like) delete models.Like;
+if (models.ModerationQueue) delete models.ModerationQueue;
+if (models.PostReport) delete models.PostReport;
 
 const Post = model("Post", postSchema);
 const PostMedia = model("PostMedia", postMediaSchema);
 const Comment = model("Comment", commentSchema);
 const Like = model("Like", likeSchema);
+const ModerationQueue = model("ModerationQueue", moderationQueueSchema);
+const PostReport = model("PostReport", postReportSchema);
 
-export { Post, PostMedia, Comment, Like };
+export { Post, PostMedia, Comment, Like, ModerationQueue, PostReport };
 
