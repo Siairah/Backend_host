@@ -60,6 +60,10 @@ const notificationSchema = new Schema({
     type: Boolean,
     default: false
   },
+  acknowledged: {
+    type: Boolean,
+    default: false
+  },
   target_url: {
     type: String,
     default: null
