@@ -66,7 +66,8 @@ router.post("/:post_id", async (req, res) => {
 
   } catch (error) {
     console.error(" Add comment error:", error);
-    return res.status(500).json({ success: false, message: "Server error: " + error.message });
+    const { sanitizeError } = await import('./utils/errorSanitizer.js');
+    return res.status(500).json({ success: false, message: "Server error: " + sanitizeError(error) });
   }
 });
 
@@ -103,7 +104,8 @@ router.get("/:post_id", async (req, res) => {
 
   } catch (error) {
     console.error(" Get comments error:", error);
-    return res.status(500).json({ success: false, message: "Server error: " + error.message });
+    const { sanitizeError } = await import('./utils/errorSanitizer.js');
+    return res.status(500).json({ success: false, message: "Server error: " + sanitizeError(error) });
   }
 });
 
