@@ -127,7 +127,8 @@ router.post("/create-group-in-circle", async (req, res) => {
         unread_count: 0,
         created_at: chatRoom.created_at || new Date().toISOString(),
         display_name: chatRoom.name,
-        profile_pic: null,
+        profile_pic: chatRoom.profile_pic || null,
+        created_by: chatRoom.created_by?.toString() || created_by,
       },
     });
 
@@ -558,30 +559,64 @@ router.get("/get-circle-members", async (req, res) => {
     const Profile = (await import("./models/profile.js")).default;
     const mongoose = await import("mongoose");
 
+    // Find all memberships for this circle with safe populate
     const memberships = await CircleMembership.find({ circle: circle_id })
-      .populate("user", "email")
+      .populate({
+        path: "user",
+        select: "_id email",
+        options: { strictPopulate: false } // Don't throw error if user doesn't exist
+      })
       .lean();
 
+    // Process members with error handling
     const members = await Promise.all(
       memberships.map(async (membership) => {
-        const user = membership.user;
-        const profile = await Profile.findOne({ user: user._id }).lean();
+        try {
+          // Check if user exists (might have been deleted or populate failed)
+          if (!membership || !membership.user || !membership.user._id) {
+            console.warn('Skipping membership with missing user:', membership?._id);
+            return null;
+          }
 
-        return {
-          id: user._id.toString(),
-          email: user.email,
-          full_name: profile?.full_name || user.email,
-          profile_pic: profile?.profile_pic || "/images/default_profile.png",
-          is_admin: membership.is_admin,
-        };
+          const user = membership.user;
+          const userId = user._id?.toString() || user._id;
+          
+          if (!userId) {
+            console.warn('Skipping membership with invalid user ID:', membership?._id);
+            return null;
+          }
+
+          // Find profile for this user
+          const profile = await Profile.findOne({ user: userId }).lean();
+
+          return {
+            id: userId,
+            email: user.email || 'Unknown',
+            full_name: profile?.full_name || user.email || 'Unknown User',
+            profile_pic: profile?.profile_pic || "/images/default_profile.png",
+            is_admin: membership.is_admin || false,
+          };
+        } catch (error) {
+          console.error('Error processing membership:', membership?._id, error);
+          return null; // Skip this member if there's an error
+        }
       })
     );
 
-    return res.json({ success: true, members });
+    // Filter out null values (failed memberships)
+    const validMembers = members.filter(m => m !== null);
+
+    console.log(`✅ Fetched ${validMembers.length} members for circle ${circle_id}`);
+
+    return res.json({ success: true, members: validMembers });
   } catch (error) {
     console.error("❌ Get circle members error:", error);
     const { sanitizeError } = await import('./utils/errorSanitizer.js');
-    return res.status(500).json({ success: false, message: sanitizeError(error) });
+    return res.status(500).json({ 
+      success: false, 
+      message: sanitizeError(error),
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -629,6 +664,7 @@ router.get("/get-rooms", async (req, res) => {
 
         if (room.is_group) {
           displayName = room.name;
+          profilePic = room.profile_pic || null;
         } else {
           const otherMember = room.members.find((m) => m._id.toString() !== user_id);
           if (otherMember) {
@@ -728,6 +764,46 @@ router.post("/remove-member", async (req, res) => {
     room.members = room.members.filter(m => m.toString() !== member_id);
     await room.save();
 
+    await room.populate("members", "email");
+    await room.populate("circle", "name");
+    
+    const Profile = (await import("./models/profile.js")).default;
+    const membersWithProfiles = await Promise.all(
+      room.members.map(async (m) => {
+        const profile = await Profile.findOne({ user: m._id }).lean();
+        return {
+          id: m._id.toString(),
+          email: m.email,
+          full_name: profile?.full_name || m.email,
+          profile_pic: profile?.profile_pic || null,
+        };
+      })
+    );
+
+    // Get last message for unread count
+    const lastMessage = await ChatMessage.findOne({ room: room._id })
+      .sort({ timestamp: -1 })
+      .populate("sender", "email")
+      .lean();
+
+    const unreadCount = await ChatMessage.countDocuments({
+      room: room._id,
+      sender: { $ne: user_id },
+      seen_by: { $ne: user_id },
+    });
+
+    // Get sender profile for last message
+    let lastMessageSender = null;
+    if (lastMessage && lastMessage.sender) {
+      const senderProfile = await Profile.findOne({ user: lastMessage.sender._id }).lean();
+      lastMessageSender = {
+        id: lastMessage.sender._id.toString(),
+        email: lastMessage.sender.email,
+        full_name: senderProfile?.full_name || lastMessage.sender.email,
+        profile_pic: senderProfile?.profile_pic || null,
+      };
+    }
+
     req.io.to(room_id.toString()).emit("member_removed", {
       room_id: room_id.toString(),
       member_id: member_id
@@ -738,7 +814,32 @@ router.post("/remove-member", async (req, res) => {
       action: "removed"
     });
 
-    return res.json({ success: true, message: "Member removed from group" });
+    return res.json({ 
+      success: true, 
+      message: "Member removed from group",
+      room: {
+        id: room._id.toString(),
+        is_group: room.is_group,
+        name: room.name,
+        circle: room.circle
+          ? { id: room.circle._id.toString(), name: room.circle.name }
+          : null,
+        members: membersWithProfiles,
+        member_count: room.members.length,
+        last_message: lastMessage
+          ? {
+              content: lastMessage.content,
+              sender: lastMessageSender,
+              timestamp: lastMessage.timestamp,
+            }
+          : null,
+        unread_count: unreadCount,
+        created_at: room.created_at || new Date().toISOString(),
+        display_name: room.name,
+        profile_pic: room.profile_pic || null,
+        created_by: room.created_by?.toString() || null,
+      }
+    });
 
   } catch (error) {
     console.error("❌ Remove member error:", error);
@@ -846,6 +947,8 @@ router.post("/add-member", async (req, res) => {
     await room.save();
 
     await room.populate("members", "email");
+    await room.populate("circle", "name");
+    
     const Profile = (await import("./models/profile.js")).default;
     const membersWithProfiles = await Promise.all(
       room.members.map(async (m) => {
@@ -858,6 +961,18 @@ router.post("/add-member", async (req, res) => {
         };
       })
     );
+
+    // Get last message for unread count
+    const lastMessage = await ChatMessage.findOne({ room: room._id })
+      .sort({ timestamp: -1 })
+      .populate("sender", "email")
+      .lean();
+
+    const unreadCount = await ChatMessage.countDocuments({
+      room: room._id,
+      sender: { $ne: user_id },
+      seen_by: { $ne: user_id },
+    });
 
     const memberIdsForSocket = newMembers.map(id => id.toString());
     req.io.to(room_id.toString()).emit("member_added", {
@@ -872,12 +987,42 @@ router.post("/add-member", async (req, res) => {
       });
     });
 
+    // Get sender profile for last message
+    let lastMessageSender = null;
+    if (lastMessage && lastMessage.sender) {
+      const senderProfile = await Profile.findOne({ user: lastMessage.sender._id }).lean();
+      lastMessageSender = {
+        id: lastMessage.sender._id.toString(),
+        email: lastMessage.sender.email,
+        full_name: senderProfile?.full_name || lastMessage.sender.email,
+        profile_pic: senderProfile?.profile_pic || null,
+      };
+    }
+
     return res.json({ 
       success: true, 
       message: "Members added successfully",
       room: {
         id: room._id.toString(),
-        members: membersWithProfiles
+        is_group: room.is_group,
+        name: room.name,
+        circle: room.circle
+          ? { id: room.circle._id.toString(), name: room.circle.name }
+          : null,
+        members: membersWithProfiles,
+        member_count: room.members.length,
+        last_message: lastMessage
+          ? {
+              content: lastMessage.content,
+              sender: lastMessageSender,
+              timestamp: lastMessage.timestamp,
+            }
+          : null,
+        unread_count: unreadCount,
+        created_at: room.created_at || new Date().toISOString(),
+        display_name: room.name,
+        profile_pic: room.profile_pic || null,
+        created_by: room.created_by?.toString() || null,
       }
     });
 
