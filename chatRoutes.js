@@ -513,27 +513,33 @@ router.post("/delete-message", async (req, res) => {
       message.media = null;
       await message.save();
 
-      // 🔥 REAL-TIME notify
-      req.io.to(message.room.toString()).emit("deleted_message", {
-        message_id,
-        room_id: message.room.toString()
-      });
+      // 🔥 REAL-TIME notify (only if io is available)
+      if (req.io) {
+        req.io.to(message.room.toString()).emit("deleted_message", {
+          message_id,
+          room_id: message.room.toString()
+        });
+      }
 
       return res.json({ success: true, message: "Message deleted for everyone" });
     }
 
     // delete for self
-    if (!message.deleted_by.includes(user_id)) {
+    const deletedBy = message.deleted_by || [];
+    if (!deletedBy.some((id) => id.toString() === user_id)) {
+      message.deleted_by = deletedBy;
       message.deleted_by.push(user_id);
       await message.save();
     }
 
-    // 🔥 REAL-TIME notify user that message was deleted for them
-    req.io.to(message.room.toString()).emit("message_deleted_for_user", {
-      message_id,
-      user_id,
-      room_id: message.room.toString()
-    });
+    // 🔥 REAL-TIME notify user that message was deleted for them (only if io is available)
+    if (req.io) {
+      req.io.to(message.room.toString()).emit("message_deleted_for_user", {
+        message_id,
+        user_id,
+        room_id: message.room.toString()
+      });
+    }
 
     return res.json({ success: true, message: "Message deleted for you" });
 
