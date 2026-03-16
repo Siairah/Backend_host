@@ -18,6 +18,10 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Circle not found" });
     }
 
+    if (!circle.created_by) {
+      return res.status(500).json({ success: false, message: "Circle creator not found" });
+    }
+
     // Check if user is member
     let is_member = false;
     let is_admin = false;
@@ -39,7 +43,8 @@ router.get("/:id", async (req, res) => {
       .sort({ joined_at: -1 })
       .limit(10);
 
-    const members = await Promise.all(memberships.map(async (membership) => {
+    const members = (await Promise.all(memberships.map(async (membership) => {
+      if (!membership.user) return null;
       const profile = await Profile.findOne({ user: membership.user._id });
       return {
         id: membership.user._id,
@@ -48,7 +53,7 @@ router.get("/:id", async (req, res) => {
         profile_pic: profile?.profile_pic || '/images/default_profile.png',
         is_admin: membership.is_admin
       };
-    }));
+    }))).filter(Boolean);
 
     // PUBLIC circles: anyone can see posts
     // PRIVATE circles: only members can see posts

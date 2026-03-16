@@ -2,8 +2,12 @@ import { Router } from "express";
 import multer from "multer";
 import cloudinary from "./cloudinaryConfig.js";
 import { Circle, CircleMembership, CircleJoinRequest } from "./models/circle.js";
+import circleManagement from "./circleManagement/index.js";
 
 const router = Router();
+
+// Mount circle management routes (manage, members, banned-users, restricted-users, etc.)
+router.use(circleManagement);
 const upload = multer({ storage: multer.memoryStorage() });
 
 // POST /circles/create (Django logic)
@@ -77,7 +81,8 @@ router.get("/list", async (req, res) => {
     if (user_id) {
       const memberships = await CircleMembership.find({ user: user_id }).populate('circle');
       
-      circles = await Promise.all(memberships.map(async (membership) => {
+      circles = (await Promise.all(memberships.map(async (membership) => {
+        if (!membership.circle) return null;
         const memberCount = await CircleMembership.countDocuments({ circle: membership.circle._id });
         
         return {
@@ -89,7 +94,7 @@ router.get("/list", async (req, res) => {
           member_count: memberCount,
           is_admin: membership.is_admin
         };
-      }));
+      }))).filter(Boolean);
     } else {
       const allCircles = await Circle.find({ visibility: 'public' });
       

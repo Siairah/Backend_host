@@ -3,7 +3,7 @@ import multer from "multer";
 import cloudinary from "./cloudinaryConfig.js";
 import { Post, PostReport, ModerationQueue } from "./models/post.js";
 import { Circle, CircleMembership } from "./models/circle.js";
-import { notifyCircleAdmins } from "./utils/notifications.js";
+import { notifyCircleAdmins, sendNotification } from "./utils/notifications.js";
 import Profile from "./models/profile.js";
 
 const router = Router();
@@ -101,31 +101,49 @@ router.post("/report", upload.single("photo"), async (req, res) => {
 
     console.log("✅ Report created:", report._id);
 
-    if (photoUrl) {
-      await ModerationQueue.create({
-        user: user_id,
-        post: post_id,
-        image: photoUrl,
-        text: reason.trim(),
-        reason: "User Report",
-        reviewed_by_admin: false,
-        reviewed_by_superadmin: false
+    // Always add to ModerationQueue when a post is reported (not just when photo)
+    await ModerationQueue.create({
+      user: user_id,
+      post: post_id,
+      image: photoUrl || null,
+      text: reason.trim(),
+      reason: "User Report: " + reason.trim(),
+      reviewed_by_admin: false,
+      reviewed_by_superadmin: false
+    });
+    console.log("✅ ModerationQueue entry created");
+
+    // Send warning to post owner when their post is reported
+    if (post.circle && post.user) {
+      const postOwnerId = post.user._id.toString();
+      const circleId = (post.circle._id || post.circle).toString();
+      const circle = await Circle.findById(circleId);
+
+      await sendNotification({
+        recipientId: postOwnerId,
+        senderId: user_id,
+        notificationType: 'warning',
+        message: `Your post in ${circle?.name || 'a circle'} has been reported. Reason: ${reason.trim()}. It is under review.`,
+        circleId: circleId,
+        postId: post_id,
+        targetUrl: `/circle/${circleId}/moderation`,
+        io: req.io
       });
-      console.log("✅ ModerationQueue entry created with photo");
     }
 
     if (post.circle && req.io) {
+      const circleId = (post.circle._id || post.circle).toString();
       const reporterProfile = await Profile.findOne({ user: user_id });
       const reporterName = reporterProfile?.full_name || 'A user';
-      const circle = await Circle.findById(post.circle);
-      
+      const circle = await Circle.findById(circleId);
+
       await notifyCircleAdmins({
-        circleId: post.circle._id.toString(),
+        circleId: circleId,
         senderId: user_id,
         notificationType: 'post_reported',
         message: `${reporterName} reported a post in ${circle?.name || 'your circle'}.`,
         postId: post_id,
-        targetUrl: `/circle/${post.circle._id}/reported`,
+        targetUrl: `/circle/${circleId}/manage`,
         io: req.io
       });
     }

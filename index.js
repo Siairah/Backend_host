@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express, { json } from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -18,33 +21,71 @@ import testProfileRoute from "./testProfile.js";
 // Post, Circle, Like, Comment routes (Django logic)
 import createPostRoute from "./createPost.js";
 import getPostsRoute from "./getPosts.js";
+import getPostByIdRoute from "./getPostById.js";
+import deletePostRoute from "./deletePost.js";
+import editPostRoute from "./editPost.js";
 import toggleLikeRoute from "./toggleLike.js";
 import addCommentRoute from "./addComment.js";
 import circleRoutes from "./circleRoutes.js";
+import getCircleDetailsRoute from "./getCircleDetails.js";
 import chatRoutes from "./chatRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
+import getUserModerationStatusRoute from "./getUserModerationStatus.js";
+import getModerationHistoryRoute from "./getModerationHistory.js";
+import getUserPostsRoute from "./getUserPosts.js";
+import getUserGalleryRoute from "./getUserGallery.js";
+import reportPostRoute from "./reportPost.js";
+import getSharedCirclePostsRoute from "./getSharedCirclePosts.js";
 
 const app = express();
 app.use(json());
 
-// ✅ CORS
-app.use(cors({
-  origin: [
-    "http://localhost:3000",             // dev frontend
-    "https://backend-host-wgti.onrender.com" // deployed frontend
-  ],
+// ✅ CORS - allow everywhere (localhost any port, 127.0.0.1, env URLs, vercel, netlify, etc.)
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // Allow requests with no origin (Postman, mobile, same-origin)
+    const allowed = [
+      /^https?:\/\/localhost(:\d+)?$/,
+      /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+      /\.vercel\.app$/,
+      /\.netlify\.app$/,
+      /\.onrender\.com$/,
+      /\.railway\.app$/,
+    ];
+    const envOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (envOrigins.includes(origin)) return callback(null, true);
+    if (allowed.some((pattern) => pattern.test(origin))) return callback(null, true);
+    callback(null, true); // Allow all for flexibility - set to callback(new Error('Not allowed')) to restrict
+  },
   credentials: true,
-}));
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+};
+
+app.use(cors(corsOptions));
 
 // Create HTTP server and Socket.IO (must be before routes that use req.io)
 const httpServer = createServer(app);
+const socketCorsOrigins = [
+  /^https?:\/\/localhost(:\d+)?$/,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+  /\.vercel\.app$/,
+  /\.netlify\.app$/,
+  /\.onrender\.com$/,
+  /\.railway\.app$/,
+];
+const envCorsOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const io = new Server(httpServer, {
   cors: {
-    origin: [
-      "http://localhost:3000",
-      "https://backend-host-wgti.onrender.com"
-    ],
+    origin: envCorsOrigins.length ? [...socketCorsOrigins, ...envCorsOrigins] : socketCorsOrigins,
     credentials: true,
+    methods: ['GET', 'POST'],
   },
 });
 
@@ -54,9 +95,6 @@ app.use((req, res, next) => {
   next();
 });
 
-import dotenv from 'dotenv';
-dotenv.config();
-
 const mongoURI = process.env.MONGODB_URI;
 
 mongoose.connect(mongoURI)
@@ -65,6 +103,9 @@ mongoose.connect(mongoURI)
 
 // Root test route
 app.get("/", (req, res) => res.send("Backend is working"));
+
+// Verify moderation is active (hit /api/ping-moderation to confirm correct backend)
+app.get("/ping-moderation", (req, res) => res.json({ ok: true, moderation: "enabled", version: "v2" }));
 
 // Authentication & Registration Routes
 app.use("/check-email", checkEmailRoute);
@@ -80,15 +121,27 @@ app.use("/reset-password", resetPasswordRoute);
 app.use("/profile-setup", profileSetupRoute);
 app.use("/get-user-profile", getUserProfileRoute);
 
+// User posts and gallery (profile page)
+app.use(getUserPostsRoute);
+app.use(getUserGalleryRoute);
+
+// Posts - report and shared circle posts
+app.use("/posts", reportPostRoute);
+app.use("/posts", getSharedCirclePostsRoute);
+
 // Post Management Routes (Django logic)
 app.use("/create-post", createPostRoute);
 app.use("/get-posts", getPostsRoute);
+app.use("/get-post", getPostByIdRoute);
+app.use("/delete-post", deletePostRoute);
+app.use("/edit-post", editPostRoute);
 app.use("/toggle-like", toggleLikeRoute);
 app.use("/add-comment", addCommentRoute);
 app.use("/get-comments", addCommentRoute);
 
 // Circle Management Routes (Django logic)
 app.use("/circles", circleRoutes);
+app.use("/circle-details", getCircleDetailsRoute);
 
 // Chat Management Routes (Django logic)
 app.use("/chat", chatRoutes);
@@ -96,8 +149,36 @@ app.use("/chat", chatRoutes);
 // Notification Routes
 app.use("/notifications", notificationRoutes);
 
+// User moderation status (for moderation history page)
+app.use("/user-moderation-status", getUserModerationStatusRoute);
+
+// Moderation history (admin view)
+app.use("/moderation-history", getModerationHistoryRoute);
+
 // Debug/Test Route
 app.use("/test-profile", testProfileRoute);
+
+// Debug: test content detection (POST JSON { content: "I will kill you" })
+app.post("/debug-check-content", (req, res) => {
+  const content = (req.body?.content ?? '').trim();
+  let flagged = false;
+  let reason = null;
+  const threatPatterns = [
+    /\b(i will|i'll|im gonna|i'm gonna|going to)\s+(kill|murder|hurt|harm|attack)\s+(you|them|him|her)\b/i,
+    /\b(kill|murder)\s+(you|yourself|them)\b/i,
+    /\b(will|gonna)\s+kill\s+you\b/i,
+    /\bi\s+will\s+kill\b/i,
+    /\bkill\s+you\b/i
+  ];
+  for (const re of threatPatterns) {
+    if (re.test(content)) {
+      flagged = true;
+      reason = 'Violence/threat content detected';
+      break;
+    }
+  }
+  res.json({ content, flagged, reason });
+});
 
 // Socket.IO connection handlers (io already created above)
 io.on("connection", (socket) => {
@@ -138,6 +219,24 @@ io.on("connection", (socket) => {
   });
 });
 
-// Server
-const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// Server - if port in use, try next port
+const DEFAULT_PORT = parseInt(process.env.PORT || '5000', 10);
+
+function startServer(port = DEFAULT_PORT) {
+  const server = httpServer.listen(port, () => {
+    console.log(`🚀 Server running on port ${port} (content moderation: ENABLED)`);
+    if (port !== 5000) {
+      console.log(`⚠️  Frontend hits port 5000. Run: npm run backend:fresh  to free 5000 and restart here`);
+    }
+  });
+  server.once('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`⚠️ Port ${port} in use, trying ${port + 1}...`);
+      startServer(port + 1);
+    } else {
+      throw err;
+    }
+  });
+}
+
+startServer();
