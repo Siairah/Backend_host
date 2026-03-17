@@ -129,7 +129,7 @@ app.use(getUserGalleryRoute);
 app.use("/posts", reportPostRoute);
 app.use("/posts", getSharedCirclePostsRoute);
 
-// Post Management Routes (Django logic)
+// Post Management Routes 
 app.use("/create-post", createPostRoute);
 app.use("/get-posts", getPostsRoute);
 app.use("/get-post", getPostByIdRoute);
@@ -139,11 +139,11 @@ app.use("/toggle-like", toggleLikeRoute);
 app.use("/add-comment", addCommentRoute);
 app.use("/get-comments", addCommentRoute);
 
-// Circle Management Routes (Django logic)
+// Circle Management Routes 
 app.use("/circles", circleRoutes);
 app.use("/circle-details", getCircleDetailsRoute);
 
-// Chat Management Routes (Django logic)
+// Chat Management Routes
 app.use("/chat", chatRoutes);
 
 // Notification Routes
@@ -219,15 +219,13 @@ io.on("connection", (socket) => {
   });
 });
 
-// Server - if port in use, try next port
-const DEFAULT_PORT = parseInt(process.env.PORT || '5000', 10);
+// Server - use 5001 by default to avoid conflict with other apps on 5000
+const DEFAULT_PORT = parseInt(process.env.PORT || '5001', 10);
 
 function startServer(port = DEFAULT_PORT) {
   const server = httpServer.listen(port, () => {
     console.log(`🚀 Server running on port ${port} (content moderation: ENABLED)`);
-    if (port !== 5000) {
-      console.log(`⚠️  Frontend hits port 5000. Run: npm run backend:fresh  to free 5000 and restart here`);
-    }
+    console.log(`   Frontend: set NEXT_PUBLIC_API_URL=http://localhost:${port} in .env.local`);
   });
   server.once('error', (err) => {
     if (err.code === 'EADDRINUSE') {
