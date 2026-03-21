@@ -4,7 +4,7 @@ import cloudinary from "./cloudinaryConfig.js";
 import { Post, PostMedia, ModerationQueue } from "./models/post.js";
 import { Circle, CircleMembership } from "./models/circle.js";
 import User from "./models/models.js";
-import { checkImageModeration, checkTextContent } from "./utils/sightEngine.js";
+import { checkImageModeration, checkVideoModeration, checkTextContent } from "./utils/sightEngine.js";
 import { sendNotification } from "./utils/notifications.js";
 import { notifyCircleAdmins } from "./utils/notifications.js";
 import Profile from "./models/profile.js";
@@ -24,8 +24,11 @@ router.post("/", upload.any(), async (req, res) => {
 
     console.log('📝 Create post request:', { user_id, circle_id, content: content?.substring(0, 80), contentLen: content?.length, bodyKeys: Object.keys(body), mediaCount: mediaFiles.length });
 
-    if (!user_id || !content) {
-      return res.status(400).json({ success: false, message: "User ID and content required" });
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID required" });
+    }
+    if (!(content || '').trim() && mediaFiles.length === 0) {
+      return res.status(400).json({ success: false, message: "Add content or media to your post" });
     }
 
     const user = await User.findById(user_id);
@@ -48,40 +51,20 @@ router.post("/", upload.any(), async (req, res) => {
       is_approved = membership.is_admin;
     }
 
-    // Check text content - CHECK TWICE: local + SightEngine (flag if EITHER catches)
+    // Content moderation: SightEngine API only (no manual patterns)
     let flagged = false;
     let flaggedReason = null;
     const trimmedContent = (content || '').trim();
+
     if (trimmedContent) {
-      // Check 1: Local patterns (no API, always works) - broad patterns for typos
-      const threatPatterns = [
-        /\bi\s+will\s+kill\w*\s+you\b/i,           // "i will kill you", "i will killl you"
-        /\bkill\w*\s+you\b/i,                      // "kill you", "killl you"
-        /\b(will|gonna)\s+kill\w*\s+you\b/i,
-        /\b(i'll|im gonna|i'm gonna|going to)\s+(kill|murder|hurt|harm|attack)\s+(you|them|him|her)\b/i,
-        /\b(kill|murder)\s+(you|yourself|them)\b/i,
-        /\b(threaten|threat)\s+to\s+(kill|hurt|harm)\b/i,
-        /\bdrugs?\s+deal\b/i,
-        /\b(weed|cocaine|heroin)\s+(for\s+)?sale\b/i
-      ];
-      for (const re of threatPatterns) {
-        if (re.test(trimmedContent)) {
-          flagged = true;
-          flaggedReason = (flaggedReason ? flaggedReason + '; ' : '') + 'Violence/threat content detected';
-          console.log('🚩 Post flagged (local check 1):', trimmedContent.substring(0, 60));
-          break;
-        }
-      }
-      // Check 2: SightEngine API (runs with retry)
       const textCheck = await checkTextContent(trimmedContent);
       if (textCheck.flagged) {
         flagged = true;
-        flaggedReason = (flaggedReason ? flaggedReason + '; ' : '') + (textCheck.reason || 'Inappropriate text content detected');
-        console.log('🚩 Post flagged (SightEngine check 2):', textCheck.reason);
+        flaggedReason = textCheck.reason || 'Inappropriate text content detected';
+        console.log('🚩 Post flagged (SightEngine text):', textCheck.reason);
       }
     }
 
-    // Check images - CHECK TWICE: SightEngine with retry, correct mime type
     if (mediaFiles.length > 0) {
       for (const file of mediaFiles) {
         if (file.mimetype?.startsWith('image/')) {
@@ -89,7 +72,15 @@ router.post("/", upload.any(), async (req, res) => {
           if (imageCheck.flagged) {
             flagged = true;
             flaggedReason = flaggedReason ? `${flaggedReason}; ${imageCheck.reason}` : (imageCheck.reason || 'Inappropriate image content detected');
-            console.log('🚩 Post flagged (image):', imageCheck.reason);
+            console.log('🚩 Post flagged (SightEngine image):', imageCheck.reason);
+            break;
+          }
+        } else if (file.mimetype?.startsWith('video/')) {
+          const videoCheck = await checkVideoModeration(file.buffer, file.mimetype || 'video/mp4');
+          if (videoCheck.flagged) {
+            flagged = true;
+            flaggedReason = flaggedReason ? `${flaggedReason}; ${videoCheck.reason}` : (videoCheck.reason || 'Inappropriate video content detected');
+            console.log('🚩 Post flagged (SightEngine video):', videoCheck.reason);
             break;
           }
         }

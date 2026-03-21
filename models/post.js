@@ -16,7 +16,8 @@ const postSchema = new Schema({
   },
   content: {
     type: String,
-    required: true
+    default: '',
+    required: false
   },
   is_public: {
     type: Boolean,

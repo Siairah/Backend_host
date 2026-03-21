@@ -10,9 +10,10 @@ router.put("/:post_id", upload.array("media", 10), async (req, res) => {
   try {
     const { post_id } = req.params;
     const { user_id, content } = req.body;
+    const mediaFiles = req.files || [];
 
-    if (!user_id || !content) {
-      return res.status(400).json({ success: false, message: "User ID and content required" });
+    if (!user_id) {
+      return res.status(400).json({ success: false, message: "User ID required" });
     }
 
     const post = await Post.findById(post_id);
@@ -24,7 +25,12 @@ router.put("/:post_id", upload.array("media", 10), async (req, res) => {
       return res.status(403).json({ success: false, message: "You can only edit your own posts" });
     }
 
-    post.content = content;
+    const existingMedia = await PostMedia.countDocuments({ post: post_id });
+    if (!(content || '').trim() && mediaFiles.length === 0 && existingMedia === 0) {
+      return res.status(400).json({ success: false, message: "Add content or media to your post" });
+    }
+
+    post.content = content ?? '';
     await post.save();
 
     if (req.files && req.files.length > 0) {
@@ -44,7 +50,7 @@ router.put("/:post_id", upload.array("media", 10), async (req, res) => {
       for (const file of req.files) {
         const result = await new Promise((resolve, reject) => {
           const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: 'posts' },
+            { folder: 'posts', resource_type: 'auto' },
             (error, result) => {
               if (error) reject(error);
               else resolve(result);
