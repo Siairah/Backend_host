@@ -36,6 +36,7 @@ import getUserPostsRoute from "./getUserPosts.js";
 import getUserGalleryRoute from "./getUserGallery.js";
 import reportPostRoute from "./reportPost.js";
 import getSharedCirclePostsRoute from "./getSharedCirclePosts.js";
+import eventRoutes from "./eventRoutes.js";
 
 const app = express();
 app.use(json());
@@ -146,6 +147,9 @@ app.use("/circle-details", getCircleDetailsRoute);
 // Chat Management Routes
 app.use("/chat", chatRoutes);
 
+// Circle Events (admin add/delete, members reserve)
+app.use("/events", eventRoutes);
+
 // Notification Routes
 app.use("/notifications", notificationRoutes);
 
@@ -219,22 +223,10 @@ io.on("connection", (socket) => {
   });
 });
 
-// Server - use 5001 by default to avoid conflict with other apps on 5000
-const DEFAULT_PORT = parseInt(process.env.PORT || '5001', 10);
+// Server - fixed port (no auto-increment). Set PORT in .env to change.
+const PORT = parseInt(process.env.PORT || '5001', 10);
 
-function startServer(port = DEFAULT_PORT) {
-  const server = httpServer.listen(port, () => {
-    console.log(`🚀 Server running on port ${port} (content moderation: ENABLED)`);
-    console.log(`   Frontend: set NEXT_PUBLIC_API_URL=http://localhost:${port} in .env.local`);
-  });
-  server.once('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`⚠️ Port ${port} in use, trying ${port + 1}...`);
-      startServer(port + 1);
-    } else {
-      throw err;
-    }
-  });
-}
-
-startServer();
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`   Frontend: NEXT_PUBLIC_API_URL=http://localhost:${PORT} in .env.local`);
+});

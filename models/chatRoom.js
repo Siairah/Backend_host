@@ -27,6 +27,10 @@ const chatRoomSchema = new Schema({
     ref: 'User',
     required: true
   },
+  profile_pic: {
+    type: String,
+    default: null
+  },
   created_at: {
     type: Date,
     default: Date.now

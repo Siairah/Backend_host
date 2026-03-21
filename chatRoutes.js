@@ -1039,6 +1039,70 @@ router.post("/add-member", async (req, res) => {
   }
 });
 
+/* ---------------------------
+   UPDATE GROUP AVATAR
+---------------------------- */
+router.post("/update-group-avatar", upload.single("avatar"), async (req, res) => {
+  try {
+    const { room_id, user_id } = req.body;
+
+    if (!room_id || !user_id) {
+      return res.status(400).json({ success: false, message: "Room ID and User ID required" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Avatar image required" });
+    }
+
+    const room = await ChatRoom.findById(room_id);
+    if (!room) {
+      return res.status(404).json({ success: false, message: "Room not found" });
+    }
+
+    if (!room.is_group) {
+      return res.status(400).json({ success: false, message: "Only group chats have avatars" });
+    }
+
+    if (room.created_by.toString() !== user_id) {
+      return res.status(403).json({ success: false, message: "Only group admin can update avatar" });
+    }
+
+    const uploaded = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: "chat_avatars", resource_type: "image" },
+        (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    if (!uploaded?.secure_url) {
+      return res.status(500).json({ success: false, message: "Failed to upload avatar" });
+    }
+
+    room.profile_pic = uploaded.secure_url;
+    await room.save();
+
+    if (req.io) {
+      req.io.to(room_id.toString()).emit("group_avatar_updated", {
+        room_id: room_id.toString(),
+        profile_pic: room.profile_pic,
+      });
+    }
+
+    return res.json({
+      success: true,
+      profile_pic: room.profile_pic,
+      message: "Group avatar updated",
+    });
+  } catch (error) {
+    console.error("❌ Update group avatar error:", error);
+    const { sanitizeError } = await import('./utils/errorSanitizer.js');
+    return res.status(500).json({ success: false, message: sanitizeError(error) });
+  }
+});
+
 router.post("/delete-group", async (req, res) => {
   try {
     const { room_id, user_id } = req.body;
