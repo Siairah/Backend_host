@@ -54,6 +54,39 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /get-user-profile/by-id/:id - Get profile by user ID (public, no token)
+router.get("/by-id/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const mongoose = await import("mongoose");
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid user ID" });
+    }
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    const profile = await Profile.findOne({ user: user._id });
+    return res.json({
+      success: true,
+      user: {
+        id: user._id,
+        email: user.email,
+        phone: user.phone || "",
+        fullName: profile?.full_name || "User",
+        bio: profile?.bio || "",
+        dob: profile?.dob || null,
+        gender: profile?.gender || null,
+        profilePic: profile?.profile_pic || "/images/default_profile.png",
+        hasProfile: !!profile
+      }
+    });
+  } catch (error) {
+    console.error("Get user profile by id error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // GET /get-user-profile/:email - Get profile by email
 router.get("/:email", async (req, res) => {
   try {
