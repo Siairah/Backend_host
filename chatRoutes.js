@@ -205,7 +205,7 @@ router.post("/create-dm", async (req, res) => {
 ---------------------------- */
 router.post("/send-message", upload.single("media"), async (req, res) => {
   try {
-    const { room_id, sender_id, content, message_type, reply_to } = req.body;
+    const { room_id, sender_id, content, message_type, reply_to, call_status, call_duration } = req.body;
 
     if (!room_id || !sender_id) {
       return res.status(400).json({ success: false, message: "Room ID and sender required" });
@@ -275,7 +275,11 @@ router.post("/send-message", upload.single("media"), async (req, res) => {
       message_type: message_type || "text",
       media: mediaUrl,
       reply_to: reply_to || null,
-      seen_by: [] // Start empty - only recipients who view the message should be added
+      seen_by: [], // Start empty - only recipients who view the message should be added
+      ...(call_status ? { call_status } : {}),
+      ...(call_duration != null && call_duration !== ""
+        ? { call_duration: parseInt(String(call_duration), 10) || null }
+        : {}),
     });
 
     await message.populate("sender", "email");

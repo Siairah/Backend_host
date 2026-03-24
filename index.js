@@ -205,10 +205,11 @@ io.on("connection", (socket) => {
   socket.on("register_tab", (data) => {
     const { tabId, userId, token } = data || {};
     if (userId) {
-      socket.join(`notif_${userId}`);
-      socket.join(userId); // Also join user ID room for chat events (group_created, dm_created)
-      socket.emit("tab_registered", { success: true, tabId, room: `notif_${userId}` });
-      console.log(`Tab ${tabId} registered for user ${userId}`);
+      const uid = String(userId);
+      socket.join(`notif_${uid}`);
+      socket.join(uid); // Also join user ID room for chat events (group_created, dm_created)
+      socket.emit("tab_registered", { success: true, tabId, room: `notif_${uid}` });
+      console.log(`Tab ${tabId} registered for user ${uid}`);
     } else {
       socket.emit("tab_registered", { success: false });
     }
@@ -216,6 +217,18 @@ io.on("connection", (socket) => {
 
   socket.on("update_tab_auth", (data) => {
     socket.emit("auth_updated", { success: true });
+  });
+
+  /** WebRTC 1:1 signaling — forward to target user's room (joined on register_tab) */
+  socket.on("webrtc_signal", (data) => {
+    try {
+      if (!data || typeof data !== "object") return;
+      const to = data.to != null ? String(data.to) : "";
+      if (!to) return;
+      io.to(to).emit("webrtc_signal", data);
+    } catch (e) {
+      console.error("webrtc_signal relay error:", e);
+    }
   });
 
   socket.on("disconnect", () => {
