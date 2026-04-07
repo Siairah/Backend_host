@@ -23,6 +23,82 @@ const upload = multer({
   }
 });
 
+/** Same shape as items in GET /get-rooms (members with id/email/profile, display_name, etc.) */
+async function buildRoomListItem(room, user_id) {
+  const Profile = (await import("./models/profile.js")).default;
+  const lastMessage = await ChatMessage.findOne({ room: room._id })
+    .sort({ timestamp: -1 })
+    .populate("sender", "email")
+    .lean();
+
+  const unreadCount = await ChatMessage.countDocuments({
+    room: room._id,
+    sender: { $ne: user_id },
+    seen_by: { $ne: user_id },
+  });
+
+  let displayName = "";
+  let profilePic = null;
+
+  if (room.is_group) {
+    displayName = room.name;
+    profilePic = room.profile_pic || null;
+  } else {
+    const otherMember = room.members.find((m) => m._id.toString() !== user_id.toString());
+    if (otherMember) {
+      const profile = await Profile.findOne({ user: otherMember._id }).lean();
+      displayName = profile?.full_name || otherMember.email;
+      profilePic = profile?.profile_pic || null;
+    }
+  }
+
+  const membersWithProfiles = await Promise.all(
+    room.members.map(async (m) => {
+      const profile = await Profile.findOne({ user: m._id }).lean();
+      return {
+        id: m._id.toString(),
+        email: m.email,
+        full_name: profile?.full_name || m.email,
+        profile_pic: profile?.profile_pic || null,
+      };
+    })
+  );
+
+  let lastMessageSender = null;
+  if (lastMessage && lastMessage.sender) {
+    const senderProfile = await Profile.findOne({ user: lastMessage.sender._id }).lean();
+    lastMessageSender = {
+      id: lastMessage.sender._id.toString(),
+      email: lastMessage.sender.email,
+      full_name: senderProfile?.full_name || lastMessage.sender.email,
+      profile_pic: senderProfile?.profile_pic || null,
+    };
+  }
+
+  return {
+    id: room._id.toString(),
+    is_group: room.is_group,
+    name: room.name,
+    circle: room.circle
+      ? { id: room.circle._id.toString(), name: room.circle.name }
+      : null,
+    members: membersWithProfiles,
+    member_count: room.members.length,
+    last_message: lastMessage
+      ? {
+          content: lastMessage.content,
+          sender: lastMessageSender,
+          timestamp: lastMessage.timestamp,
+        }
+      : null,
+    unread_count: unreadCount,
+    created_at: room.created_at,
+    display_name: displayName,
+    profile_pic: profilePic,
+    created_by: room.created_by?.toString() || null,
+  };
+}
+
 /* ---------------------------
    CREATE GROUP INSIDE CIRCLE
 ---------------------------- */
@@ -159,15 +235,24 @@ router.post("/create-dm", async (req, res) => {
       members: { $all: [user1_id, user2_id], $size: 2 }
     });
 
-    if (existingRoom) {
-      return res.json({
+    const respondWithFormattedRoom = async (roomId, requestingUserId, statusCode, message) => {
+      const roomLean = await ChatRoom.findById(roomId)
+        .populate("members", "email")
+        .populate("circle", "name")
+        .lean();
+      if (!roomLean) {
+        return res.status(404).json({ success: false, message: "Room not found" });
+      }
+      const roomPayload = await buildRoomListItem(roomLean, requestingUserId);
+      return res.status(statusCode).json({
         success: true,
-        message: "DM already exists",
-        room: {
-          id: existingRoom._id,
-          members: existingRoom.members
-        }
+        message,
+        room: roomPayload,
       });
+    };
+
+    if (existingRoom) {
+      return respondWithFormattedRoom(existingRoom._id, user1_id, 200, "DM already exists");
     }
 
     const chatRoom = await ChatRoom.create({
@@ -178,20 +263,12 @@ router.post("/create-dm", async (req, res) => {
       created_by: user1_id
     });
 
-    // 🔥 REAL-TIME: Notify 2 users
     req.io.to([user1_id, user2_id]).emit("dm_created", {
       room_id: chatRoom._id,
       members: chatRoom.members
     });
 
-    return res.status(201).json({
-      success: true,
-      message: "DM created successfully",
-      room: {
-        id: chatRoom._id,
-        members: chatRoom.members
-      }
-    });
+    return respondWithFormattedRoom(chatRoom._id, user1_id, 201, "DM created successfully");
 
   } catch (error) {
     console.error("❌ Create DM error:", error);
@@ -654,84 +731,8 @@ router.get("/get-rooms", async (req, res) => {
       .sort({ created_at: -1 })
       .lean();
 
-    const Profile = (await import("./models/profile.js")).default;
-
     const roomsData = await Promise.all(
-      rooms.map(async (room) => {
-        const lastMessage = await ChatMessage.findOne({ room: room._id })
-          .sort({ timestamp: -1 })
-          .populate("sender", "email")
-          .lean();
-
-        const unreadCount = await ChatMessage.countDocuments({
-          room: room._id,
-          sender: { $ne: user_id },
-          seen_by: { $ne: user_id },
-        });
-
-        let displayName = "";
-        let profilePic = null;
-
-        if (room.is_group) {
-          displayName = room.name;
-          profilePic = room.profile_pic || null;
-        } else {
-          const otherMember = room.members.find((m) => m._id.toString() !== user_id);
-          if (otherMember) {
-            const profile = await Profile.findOne({ user: otherMember._id }).lean();
-            displayName = profile?.full_name || otherMember.email;
-            profilePic = profile?.profile_pic || null;
-          }
-        }
-
-        // Get profile data for all members
-        const membersWithProfiles = await Promise.all(
-          room.members.map(async (m) => {
-            const profile = await Profile.findOne({ user: m._id }).lean();
-            return {
-              id: m._id.toString(),
-              email: m.email,
-              full_name: profile?.full_name || m.email,
-              profile_pic: profile?.profile_pic || null,
-            };
-          })
-        );
-
-        // Get sender profile for last message
-        let lastMessageSender = null;
-        if (lastMessage && lastMessage.sender) {
-          const senderProfile = await Profile.findOne({ user: lastMessage.sender._id }).lean();
-          lastMessageSender = {
-            id: lastMessage.sender._id.toString(),
-            email: lastMessage.sender.email,
-            full_name: senderProfile?.full_name || lastMessage.sender.email,
-            profile_pic: senderProfile?.profile_pic || null,
-          };
-        }
-
-        return {
-          id: room._id.toString(),
-          is_group: room.is_group,
-          name: room.name,
-          circle: room.circle
-            ? { id: room.circle._id.toString(), name: room.circle.name }
-            : null,
-          members: membersWithProfiles,
-          member_count: room.members.length,
-          last_message: lastMessage
-            ? {
-                content: lastMessage.content,
-                sender: lastMessageSender,
-                timestamp: lastMessage.timestamp,
-              }
-            : null,
-          unread_count: unreadCount,
-          created_at: room.created_at,
-          display_name: displayName,
-          profile_pic: profilePic,
-          created_by: room.created_by?.toString() || null,
-        };
-      })
+      rooms.map((room) => buildRoomListItem(room, user_id))
     );
 
     return res.json({ success: true, rooms: roomsData });

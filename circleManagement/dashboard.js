@@ -240,7 +240,8 @@ router.get("/manage/:circle_id", async (req, res) => {
         name: circle.name,
         description: circle.description,
         cover_image: circle.cover_image,
-        visibility: circle.visibility
+        visibility: circle.visibility,
+        created_by: circle.created_by?.toString?.() || String(circle.created_by)
       },
       pending_requests: formattedRequests,
       members: formattedMembers,

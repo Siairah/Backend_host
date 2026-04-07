@@ -37,6 +37,7 @@ import getUserGalleryRoute from "./getUserGallery.js";
 import reportPostRoute from "./reportPost.js";
 import getSharedCirclePostsRoute from "./getSharedCirclePosts.js";
 import eventRoutes from "./eventRoutes.js";
+import adminRoutes from "./adminRoutes.js";
 
 const app = express();
 app.use(json());
@@ -96,6 +97,19 @@ app.use((req, res, next) => {
   next();
 });
 
+/** Ref-count tabs per user so "online" stays true until last tab disconnects */
+const onlineUserRefCount = new Map();
+
+function adjustOnlineRef(userId, delta) {
+  const uid = userId != null ? String(userId) : "";
+  if (!uid) return { prev: 0, next: 0 };
+  const prev = onlineUserRefCount.get(uid) || 0;
+  const next = Math.max(0, prev + delta);
+  if (next === 0) onlineUserRefCount.delete(uid);
+  else onlineUserRefCount.set(uid, next);
+  return { prev, next };
+}
+
 const mongoURI = process.env.MONGODB_URI;
 
 mongoose.connect(mongoURI)
@@ -107,6 +121,9 @@ app.get("/", (req, res) => res.send("Backend is working"));
 
 // Verify moderation is active (hit /api/ping-moderation to confirm correct backend)
 app.get("/ping-moderation", (req, res) => res.json({ ok: true, moderation: "enabled", version: "v2" }));
+
+// Admin (dashboard stats — JWT from POST /admin/login)
+app.use("/admin", adminRoutes);
 
 // Authentication & Registration Routes
 app.use("/check-email", checkEmailRoute);
@@ -206,9 +223,18 @@ io.on("connection", (socket) => {
     const { tabId, userId, token } = data || {};
     if (userId) {
       const uid = String(userId);
+      socket.data.appUserId = uid;
       socket.join(`notif_${uid}`);
       socket.join(uid); // Also join user ID room for chat events (group_created, dm_created)
       socket.emit("tab_registered", { success: true, tabId, room: `notif_${uid}` });
+      const { prev, next } = adjustOnlineRef(uid, 1);
+      if (prev === 0 && next > 0) {
+        io.emit("user_presence", { userId: uid, online: true });
+      }
+      const snapshotIds = [...onlineUserRefCount.entries()]
+        .filter(([, c]) => c > 0)
+        .map(([id]) => id);
+      socket.emit("presence_snapshot", { onlineUserIds: snapshotIds });
       console.log(`Tab ${tabId} registered for user ${uid}`);
     } else {
       socket.emit("tab_registered", { success: false });
@@ -231,7 +257,26 @@ io.on("connection", (socket) => {
     }
   });
 
+  /** Let clients fetch current online users after mount (avoids missing snapshot sent with register_tab) */
+  socket.on("request_presence", () => {
+    try {
+      const snapshotIds = [...onlineUserRefCount.entries()]
+        .filter(([, c]) => c > 0)
+        .map(([id]) => id);
+      socket.emit("presence_snapshot", { onlineUserIds: snapshotIds });
+    } catch (e) {
+      console.error("request_presence error:", e);
+    }
+  });
+
   socket.on("disconnect", () => {
+    const uid = socket.data?.appUserId;
+    if (uid) {
+      const { prev, next } = adjustOnlineRef(uid, -1);
+      if (prev > 0 && next === 0) {
+        io.emit("user_presence", { userId: uid, online: false });
+      }
+    }
     console.log("❌ Socket disconnected:", socket.id);
   });
 });

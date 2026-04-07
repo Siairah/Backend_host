@@ -102,7 +102,12 @@ router.post("/remove-admin", async (req, res) => {
       return res.status(403).json({ success: false, message: "You are not authorized" });
     }
 
-    if (circle.created_by && circle.created_by.toString() === member_id) {
+    // Others cannot demote the creator; the creator may remove their own admin role
+    if (
+      circle.created_by &&
+      circle.created_by.toString() === member_id &&
+      user_id !== member_id
+    ) {
       return res.status(400).json({ success: false, message: "Cannot remove the circle creator as admin" });
     }
 
