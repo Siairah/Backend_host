@@ -1,3 +1,7 @@
+/**
+ * Admin CRUD + analytics. All paths are relative to `/admin` (this router is mounted in `adminRoutes.js`).
+ * Middleware: `verifyAdmin` (JWT `type: "admin"` from POST /admin/login).
+ */
 import { Router } from "express";
 import mongoose from "mongoose";
 import { verifyAdmin } from "./adminAuthMiddleware.js";
@@ -12,9 +16,23 @@ import {
   CircleBanList,
 } from "./models/circle.js";
 import { adminHardDeletePost } from "./adminPostUtils.js";
+import { adminHardDeleteUser } from "./adminUserDelete.js";
+import Notification from "./models/notification.js";
 
 const router = Router();
 router.use(verifyAdmin);
+
+/** Pending reports + unreviewed flags in a circle → health score for superadmin UI. */
+async function circleModerationStats(circleObjectId) {
+  const postIds = await Post.find({ circle: circleObjectId }).distinct("_id");
+  if (!postIds.length) return { pending_reports: 0, flagged_posts: 0, health_score: 100 };
+  const [pr, fp] = await Promise.all([
+    PostReport.countDocuments({ post: { $in: postIds }, resolved: false }),
+    ModerationQueue.countDocuments({ post: { $in: postIds }, reviewed_by_admin: false }),
+  ]);
+  const health_score = Math.max(0, Math.min(100, 100 - pr * 4 - fp * 6));
+  return { pending_reports: pr, flagged_posts: fp, health_score };
+}
 
 function pagination(req) {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -57,12 +75,21 @@ router.get("/users", async (req, res) => {
 
     const [total_users, active_users, new_users_30d, online_users] = statsPack;
 
+    const itemIds = items.map((u) => u._id);
+    const profilesForPage =
+      itemIds.length > 0 ? await Profile.find({ user: { $in: itemIds } }).select("user full_name").lean() : [];
+    const displayNameByUser = new Map(profilesForPage.map((p) => [String(p.user), (p.full_name || "").trim()]));
+
     const rows = items.map((u) => ({
       id: String(u._id),
       email: u.email,
       phone: u.phone || "",
       isActive: u.isActive,
       createdAt: u.createdAt,
+      displayName: displayNameByUser.get(String(u._id)) || "",
+      isBanned: !!u.isBanned,
+      bannedUntil: u.bannedUntil || null,
+      banReason: u.banReason || "",
     }));
 
     return res.json({
@@ -92,6 +119,9 @@ router.get("/users/:id", async (req, res) => {
         email: user.email,
         phone: user.phone || "",
         isActive: user.isActive,
+        isBanned: !!user.isBanned,
+        bannedUntil: user.bannedUntil || null,
+        banReason: user.banReason || "",
         createdAt: user.createdAt,
         profile: profile
           ? {
@@ -140,7 +170,90 @@ router.post("/users/bulk", async (req, res) => {
   }
 });
 
-// ---------- Posts ----------
+/** Superadmin: ban or unban user (optional timed ban via hours or ISO until). */
+router.patch("/users/:id/ban", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!mongoose.isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const banned = !!req.body?.banned;
+    const reason = String(req.body?.reason || "").trim();
+    const hours = req.body?.hours != null ? Number(req.body.hours) : null;
+    const untilRaw = req.body?.until;
+    let bannedUntil = null;
+    if (banned) {
+      if (untilRaw) {
+        const d = new Date(untilRaw);
+        if (!Number.isNaN(d.getTime())) bannedUntil = d;
+      } else if (hours != null && Number.isFinite(hours) && hours > 0) {
+        bannedUntil = new Date(Date.now() + hours * 3600000);
+      }
+    }
+    user.isBanned = banned;
+    user.banReason = banned ? reason : "";
+    user.bannedUntil = banned ? bannedUntil : null;
+    await user.save();
+    return res.json({
+      success: true,
+      isBanned: !!user.isBanned,
+      bannedUntil: user.bannedUntil,
+      banReason: user.banReason || "",
+    });
+  } catch (e) {
+    console.error("admin user ban:", e);
+    return res.status(500).json({ success: false, message: "Failed to update ban" });
+  }
+});
+
+/** Superadmin: send in-app warning notification to user. */
+router.post("/users/:id/warning", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!mongoose.isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ success: false, message: "message required" });
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    await Notification.create({
+      recipient: user._id,
+      sender: null,
+      post: null,
+      circle: null,
+      notification_type: "warning",
+      message: `[Moderation] ${message}`,
+      is_read: false,
+      acknowledged: false,
+      target_url: "/profile",
+    });
+    return res.json({ success: true });
+  } catch (e) {
+    console.error("admin user warning:", e);
+    return res.status(500).json({ success: false, message: "Failed to send warning" });
+  }
+});
+
+/** Superadmin: permanently delete user and owned posts/content. */
+router.delete("/users/:id", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    if (!mongoose.isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid id" });
+    }
+    const r = await adminHardDeleteUser(userId);
+    if (!r.ok) return res.status(404).json({ success: false, message: r.message });
+    return res.json({ success: true });
+  } catch (e) {
+    console.error("admin delete user:", e);
+    return res.status(500).json({ success: false, message: "Failed to delete user" });
+  }
+});
+
+// ---------- Posts (superadmin: all visibility, approval states, moderation) ----------
 router.get("/posts", async (req, res) => {
   try {
     const { page, limit, skip } = pagination(req);
@@ -148,22 +261,65 @@ router.get("/posts", async (req, res) => {
     const circleId = req.query.circle_id;
     const hasMedia = req.query.has_media;
     const dateFrom = req.query.date_from ? new Date(req.query.date_from) : null;
+    const flaggedOnly = req.query.flagged_only === "true" || req.query.flagged_only === "1";
+    const reportedOnly = req.query.reported_only === "true" || req.query.reported_only === "1";
+    const needsAttention =
+      req.query.needs_attention === "true" || req.query.needs_attention === "1" || req.query.needs_attention === "yes";
+    const approval = req.query.approval;
 
-    const q = {};
-    if (search) {
-      const re = new RegExp(escapeRegex(search), "i");
-      const users = await User.find({ email: re }).distinct("_id");
-      q.$or = [{ content: re }, ...(users.length ? [{ user: { $in: users } }] : [])];
+    const andParts = [];
+
+    if (approval === "pending") andParts.push({ is_approved: false });
+    else if (approval === "approved") andParts.push({ is_approved: true });
+
+    if (circleId && mongoose.isValidObjectId(circleId)) {
+      andParts.push({ circle: new mongoose.Types.ObjectId(circleId) });
     }
-    if (circleId && mongoose.isValidObjectId(circleId)) q.circle = circleId;
+
+    if (needsAttention) {
+      const [flaggedPostIds, reportedPostIds] = await Promise.all([
+        ModerationQueue.find({ reviewed_by_admin: false }).distinct("post"),
+        PostReport.distinct("post", { resolved: false }),
+      ]);
+      const idSet = new Set([...flaggedPostIds.map(String), ...reportedPostIds.map(String)]);
+      const merged = [...idSet].map((id) => new mongoose.Types.ObjectId(id));
+      andParts.push({ _id: { $in: merged.length ? merged : [] } });
+    } else {
+      if (flaggedOnly) {
+        const flaggedPostIds = await ModerationQueue.find({ reviewed_by_admin: false }).distinct("post");
+        andParts.push({ _id: { $in: flaggedPostIds.length ? flaggedPostIds : [] } });
+      }
+      if (reportedOnly) {
+        const reportedPostIds = await PostReport.distinct("post", { resolved: false });
+        andParts.push({ _id: { $in: reportedPostIds.length ? reportedPostIds : [] } });
+      }
+    }
+
     if (hasMedia === "yes") {
       const withMedia = await PostMedia.distinct("post");
-      q._id = withMedia.length ? { $in: withMedia } : { $in: [] };
+      andParts.push({ _id: { $in: withMedia.length ? withMedia : [] } });
     } else if (hasMedia === "no") {
       const withMedia = await PostMedia.distinct("post");
-      if (withMedia.length) q._id = { $nin: withMedia };
+      if (withMedia.length) andParts.push({ _id: { $nin: withMedia } });
     }
-    if (dateFrom && !Number.isNaN(dateFrom.getTime())) q.createdAt = { $gte: dateFrom };
+
+    if (dateFrom && !Number.isNaN(dateFrom.getTime())) {
+      andParts.push({ createdAt: { $gte: dateFrom } });
+    }
+
+    if (search) {
+      const re = new RegExp(escapeRegex(search), "i");
+      const [userIds, circleIds] = await Promise.all([
+        User.find({ email: re }).distinct("_id"),
+        Circle.find({ name: re }).distinct("_id"),
+      ]);
+      const orParts = [{ content: re }];
+      if (userIds.length) orParts.push({ user: { $in: userIds } });
+      if (circleIds.length) orParts.push({ circle: { $in: circleIds } });
+      andParts.push({ $or: orParts });
+    }
+
+    const q = andParts.length === 0 ? {} : andParts.length === 1 ? andParts[0] : { $and: andParts };
 
     const [total, posts, statsPack] = await Promise.all([
       Post.countDocuments(q),
@@ -177,20 +333,43 @@ router.get("/posts", async (req, res) => {
     ]);
     const [total_posts, posts_today, total_comments, total_likes] = statsPack;
 
+    const postIds = posts.map((p) => p._id);
+    const [modRows, reportAgg] = await Promise.all([
+      postIds.length
+        ? ModerationQueue.find({
+            post: { $in: postIds },
+            reviewed_by_admin: false,
+          }).lean()
+        : [],
+      postIds.length
+        ? PostReport.aggregate([
+            { $match: { post: { $in: postIds }, resolved: false } },
+            { $group: { _id: "$post", c: { $sum: 1 } } },
+          ])
+        : [],
+    ]);
+    const modByPost = new Map(modRows.map((m) => [String(m.post), m]));
+    const reportsByPost = new Map(reportAgg.map((r) => [String(r._id), r.c]));
+
     const items = await Promise.all(
       posts.map(async (p) => {
         const mediaCount = await PostMedia.countDocuments({ post: p._id });
+        const mod = modByPost.get(String(p._id));
         return {
           id: String(p._id),
-          content: (p.content || "").slice(0, 200),
+          content: (p.content || "").slice(0, 500),
           is_public: p.is_public,
           is_approved: p.is_approved,
           createdAt: p.createdAt,
           authorEmail: p.user?.email || "",
           circleName: p.circle?.name || "",
+          circleId: p.circle ? String(p.circle._id || p.circle) : "",
           mediaCount,
           commentsCount: await Comment.countDocuments({ post: p._id, is_deleted: false }),
           likesCount: await Like.countDocuments({ post: p._id }),
+          flagged_pending: !!mod,
+          moderation_reason: mod?.reason || null,
+          open_reports: reportsByPost.get(String(p._id)) || 0,
         };
       })
     );
@@ -220,12 +399,45 @@ router.get("/posts/:id", async (req, res) => {
     }
     const p = await Post.findById(req.params.id).populate("user", "email").populate("circle", "name").lean();
     if (!p) return res.status(404).json({ success: false, message: "Post not found" });
-    const media = await PostMedia.find({ post: p._id }).lean();
+    const [media, commentsRaw, reportsRaw, modEntry] = await Promise.all([
+      PostMedia.find({ post: p._id }).lean(),
+      Comment.find({ post: p._id }).sort({ createdAt: -1 }).limit(500).populate("user", "email").lean(),
+      PostReport.find({ post: p._id }).sort({ createdAt: -1 }).populate("reported_by", "email").lean(),
+      ModerationQueue.findOne({ post: p._id }).sort({ createdAt: -1 }).lean(),
+    ]);
+
+    const comments = commentsRaw.map((c) => ({
+      id: String(c._id),
+      content: c.content || "",
+      createdAt: c.createdAt,
+      is_deleted: !!c.is_deleted,
+      authorEmail: c.user?.email || "",
+    }));
+
+    const reports = reportsRaw.map((r) => ({
+      id: String(r._id),
+      reason: r.reason || "",
+      resolved: !!r.resolved,
+      createdAt: r.createdAt,
+      reporterEmail: r.reported_by?.email || "",
+    }));
+
+    let moderation = null;
+    if (modEntry) {
+      moderation = {
+        id: String(modEntry._id),
+        reason: modEntry.reason,
+        text: modEntry.text || "",
+        reviewed_by_admin: !!modEntry.reviewed_by_admin,
+        createdAt: modEntry.createdAt,
+      };
+    }
+
     return res.json({
       success: true,
       post: {
         id: String(p._id),
-        content: p.content,
+        content: p.content || "",
         is_public: p.is_public,
         is_approved: p.is_approved,
         createdAt: p.createdAt,
@@ -234,6 +446,10 @@ router.get("/posts/:id", async (req, res) => {
         media: media.map((m) => ({ id: String(m._id), file: m.file, type: m.type })),
         commentsCount: await Comment.countDocuments({ post: p._id, is_deleted: false }),
         likesCount: await Like.countDocuments({ post: p._id }),
+        open_reports_count: reports.filter((r) => !r.resolved).length,
+        comments,
+        reports,
+        moderation,
       },
     });
   } catch (e) {
@@ -299,21 +515,27 @@ router.get("/comments", async (req, res) => {
         .skip(skip)
         .limit(limit)
         .populate("user", "email")
-        .populate("post", "content")
+        .populate({ path: "post", select: "content circle", populate: { path: "circle", select: "name" } })
         .lean(),
     ]);
 
     return res.json({
       success: true,
-      items: rows.map((c) => ({
-        id: String(c._id),
-        content: (c.content || "").slice(0, 300),
-        is_deleted: !!c.is_deleted,
-        createdAt: c.createdAt,
-        authorEmail: c.user?.email || "",
-        postId: c.post ? String(c.post._id) : "",
-        postPreview: c.post?.content ? String(c.post.content).slice(0, 80) : "",
-      })),
+      items: rows.map((c) => {
+        const post = c.post && typeof c.post === "object" ? c.post : null;
+        const circleName =
+          post && post.circle && typeof post.circle === "object" && post.circle.name ? String(post.circle.name) : "";
+        return {
+          id: String(c._id),
+          content: (c.content || "").slice(0, 300),
+          is_deleted: !!c.is_deleted,
+          createdAt: c.createdAt,
+          authorEmail: c.user?.email || "",
+          postId: post ? String(post._id) : "",
+          postPreview: post?.content ? String(post.content).slice(0, 80) : "",
+          postCircleName: circleName,
+        };
+      }),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
     });
   } catch (e) {
@@ -404,15 +626,21 @@ router.get("/circles", async (req, res) => {
     const [total_circles, circles_today, total_memberships] = statsPack;
 
     const items = await Promise.all(
-      circles.map(async (c) => ({
-        id: String(c._id),
-        name: c.name,
-        description: c.description,
-        visibility: c.visibility,
-        createdAt: c.createdAt,
-        creatorEmail: c.created_by?.email || "",
-        memberCount: await CircleMembership.countDocuments({ circle: c._id }),
-      }))
+      circles.map(async (c) => {
+        const mod = await circleModerationStats(c._id);
+        return {
+          id: String(c._id),
+          name: c.name,
+          description: c.description,
+          visibility: c.visibility,
+          createdAt: c.createdAt,
+          creatorEmail: c.created_by?.email || "",
+          memberCount: await CircleMembership.countDocuments({ circle: c._id }),
+          suspended: !!c.suspended,
+          suspendedUntil: c.suspendedUntil || null,
+          ...mod,
+        };
+      })
     );
 
     return res.json({
@@ -434,11 +662,78 @@ router.get("/circles/:id", async (req, res) => {
     }
     const c = await Circle.findById(req.params.id).populate("created_by", "email").lean();
     if (!c) return res.status(404).json({ success: false, message: "Not found" });
+
+    if (c.suspended && c.suspendedUntil && c.suspendedUntil <= new Date()) {
+      await Circle.findByIdAndUpdate(c._id, { $set: { suspended: false, suspendedUntil: null } });
+      c.suspended = false;
+      c.suspendedUntil = null;
+    }
+
+    const postsPage = Math.max(1, parseInt(req.query.posts_page, 10) || 1);
+    const postsLimit = Math.min(50, Math.max(5, parseInt(req.query.posts_limit, 10) || 15));
+    const postsSkip = (postsPage - 1) * postsLimit;
+
     const members = await CircleMembership.find({ circle: c._id })
       .sort({ joined_at: -1 })
-      .limit(15)
+      .limit(20)
       .populate("user", "email")
       .lean();
+
+    const [memberCount, mod, postTotal, postDocs] = await Promise.all([
+      CircleMembership.countDocuments({ circle: c._id }),
+      circleModerationStats(c._id),
+      Post.countDocuments({ circle: c._id }),
+      Post.find({ circle: c._id })
+        .sort({ createdAt: -1 })
+        .skip(postsSkip)
+        .limit(postsLimit)
+        .populate("user", "email")
+        .lean(),
+    ]);
+
+    const postIds = postDocs.map((p) => p._id);
+    const [modRows, reportAgg] = await Promise.all([
+      postIds.length
+        ? ModerationQueue.find({ post: { $in: postIds }, reviewed_by_admin: false }).lean()
+        : [],
+      postIds.length
+        ? PostReport.aggregate([
+            { $match: { post: { $in: postIds }, resolved: false } },
+            { $group: { _id: "$post", c: { $sum: 1 } } },
+          ])
+        : [],
+    ]);
+    const modByPost = new Map(modRows.map((m) => [String(m.post), m]));
+    const reportsByPost = new Map(reportAgg.map((r) => [String(r._id), r.c]));
+
+    const posts = await Promise.all(
+      postDocs.map(async (p) => {
+        const modEntry = modByPost.get(String(p._id));
+        const openReports = reportsByPost.get(String(p._id)) || 0;
+        const commentsCount = await Comment.countDocuments({ post: p._id, is_deleted: false });
+        const likesCount = await Like.countDocuments({ post: p._id });
+        const mediaCount = await PostMedia.countDocuments({ post: p._id });
+        const pr = openReports;
+        const fp = modEntry ? 1 : 0;
+        const health_score = Math.max(0, Math.min(100, 100 - pr * 4 - fp * 6));
+        return {
+          id: String(p._id),
+          content: (p.content || "").slice(0, 400),
+          is_public: p.is_public,
+          is_approved: p.is_approved,
+          createdAt: p.createdAt,
+          authorEmail: p.user?.email || "",
+          commentsCount,
+          likesCount,
+          mediaCount,
+          open_reports: pr,
+          flagged_pending: !!modEntry,
+          moderation_reason: modEntry?.reason || null,
+          health_score,
+        };
+      })
+    );
+
     return res.json({
       success: true,
       circle: {
@@ -449,13 +744,23 @@ router.get("/circles/:id", async (req, res) => {
         visibility: c.visibility,
         createdAt: c.createdAt,
         creatorEmail: c.created_by?.email,
-        memberCount: await CircleMembership.countDocuments({ circle: c._id }),
+        suspended: !!c.suspended,
+        suspendedUntil: c.suspendedUntil || null,
+        memberCount,
+        moderation: mod,
         members: members.map((m) => ({
           userId: String(m.user?._id),
           email: m.user?.email,
           is_admin: m.is_admin,
           joined_at: m.joined_at,
         })),
+        posts,
+        posts_pagination: {
+          page: postsPage,
+          limit: postsLimit,
+          total: postTotal,
+          pages: Math.ceil(postTotal / postsLimit) || 1,
+        },
       },
     });
   } catch (e) {
@@ -505,6 +810,126 @@ router.post("/circles/bulk", async (req, res) => {
   } catch (e) {
     console.error("admin circles bulk:", e);
     return res.status(500).json({ success: false, message: "Bulk failed" });
+  }
+});
+
+/** Superadmin: broadcast a message to circle admins or all members (in-app notifications). */
+router.post("/circles/:id/notice", async (req, res) => {
+  try {
+    const circleId = req.params.id;
+    if (!mongoose.isValidObjectId(circleId)) {
+      return res.status(400).json({ success: false, message: "Invalid circle id" });
+    }
+    const circle = await Circle.findById(circleId);
+    if (!circle) return res.status(404).json({ success: false, message: "Circle not found" });
+    const message = String(req.body?.message || "").trim();
+    const audience = req.body?.audience === "all_members" ? "all_members" : "admins_only";
+    if (!message) return res.status(400).json({ success: false, message: "message required" });
+
+    const q =
+      audience === "all_members"
+        ? { circle: circle._id }
+        : { circle: circle._id, is_admin: true };
+    const memberships = await CircleMembership.find(q).select("user").lean();
+    const text = `[Admin] ${circle.name}: ${message}`;
+    let n = 0;
+    for (const m of memberships) {
+      if (!m.user) continue;
+      await Notification.create({
+        recipient: m.user,
+        sender: null,
+        post: null,
+        circle: circle._id,
+        notification_type: "admin_broadcast",
+        message: text,
+        is_read: false,
+        acknowledged: false,
+        target_url: `/circle/${circle._id}`,
+      });
+      n += 1;
+    }
+    return res.json({ success: true, delivered: n });
+  } catch (e) {
+    console.error("admin circle notice:", e);
+    return res.status(500).json({ success: false, message: "Failed to send notice" });
+  }
+});
+
+/** Superadmin: suspend or restore a circle. Optional timed suspension: `hours` or ISO `until`. */
+router.patch("/circles/:id/suspension", async (req, res) => {
+  try {
+    const circleId = req.params.id;
+    if (!mongoose.isValidObjectId(circleId)) {
+      return res.status(400).json({ success: false, message: "Invalid circle id" });
+    }
+    const suspended = !!req.body?.suspended;
+    const hours = req.body?.hours != null ? Number(req.body.hours) : null;
+    const untilRaw = req.body?.until;
+    let suspendedUntil = null;
+    if (suspended) {
+      if (untilRaw) {
+        const d = new Date(untilRaw);
+        if (!Number.isNaN(d.getTime())) suspendedUntil = d;
+      } else if (hours != null && Number.isFinite(hours) && hours > 0) {
+        suspendedUntil = new Date(Date.now() + hours * 3600000);
+      }
+    }
+    const c = await Circle.findByIdAndUpdate(
+      circleId,
+      { $set: { suspended, suspendedUntil: suspended ? suspendedUntil : null } },
+      { new: true }
+    );
+    if (!c) return res.status(404).json({ success: false, message: "Circle not found" });
+    return res.json({
+      success: true,
+      suspended: !!c.suspended,
+      suspendedUntil: c.suspendedUntil || null,
+    });
+  } catch (e) {
+    console.error("admin circle suspension:", e);
+    return res.status(500).json({ success: false, message: "Failed to update suspension" });
+  }
+});
+
+/** Superadmin: send warning-style in-app notification to circle admins or all members. */
+router.post("/circles/:id/warning", async (req, res) => {
+  try {
+    const circleId = req.params.id;
+    if (!mongoose.isValidObjectId(circleId)) {
+      return res.status(400).json({ success: false, message: "Invalid circle id" });
+    }
+    const circle = await Circle.findById(circleId);
+    if (!circle) return res.status(404).json({ success: false, message: "Circle not found" });
+    const message = String(req.body?.message || "").trim();
+    const audience = req.body?.audience === "all_members" ? "all_members" : "admins_only";
+    if (!message) return res.status(400).json({ success: false, message: "message required" });
+
+    const q =
+      audience === "all_members"
+        ? { circle: circle._id }
+        : { circle: circle._id, is_admin: true };
+    const memberships = await CircleMembership.find(q).select("user").lean();
+    const text = `[Warning] ${circle.name}: ${message}`;
+    let n = 0;
+    for (const m of memberships) {
+      if (!m.user) continue;
+      await Notification.create({
+        recipient: m.user,
+        sender: null,
+        post: null,
+        circle: circle._id,
+        notification_type: "warning",
+        message: text,
+        is_read: false,
+        acknowledged: false,
+        target_url: `/circle/${circle._id}`,
+      });
+      n += 1;
+    }
+    return res.json({ success: true, delivered: n });
+  } catch (e) {
+    console.error("admin circle warning:", e);
+    return res.status(500).json({ success: false, message: "Failed to send warning" });
   }
 });
 
@@ -672,23 +1097,49 @@ router.get("/flagged-posts", async (req, res) => {
         .skip(skip)
         .limit(limit)
         .populate("user", "email")
-        .populate({ path: "post", select: "content", populate: { path: "user", select: "email" } })
+        .populate({
+          path: "post",
+          select: "content circle",
+          populate: [
+            { path: "user", select: "email" },
+            { path: "circle", select: "name" },
+          ],
+        })
         .lean(),
     ]);
 
+    const postIds = rows.map((r) => r.post?._id).filter(Boolean);
+    const reportAgg =
+      postIds.length > 0
+        ? await PostReport.aggregate([
+            { $match: { post: { $in: postIds }, resolved: false } },
+            { $group: { _id: "$post", c: { $sum: 1 } } },
+          ])
+        : [];
+    const openReportsByPost = new Map(reportAgg.map((x) => [String(x._id), x.c]));
+
     return res.json({
       success: true,
-      items: rows.map((row) => ({
-        id: String(row._id),
-        reason: row.reason,
-        text: (row.text || "").slice(0, 200),
-        reviewed_by_admin: row.reviewed_by_admin,
-        createdAt: row.createdAt,
-        reporterContext: row.user?.email,
-        postId: row.post ? String(row.post._id) : "",
-        postPreview: row.post?.content ? String(row.post.content).slice(0, 120) : "",
-        postAuthorEmail: row.post?.user?.email,
-      })),
+      items: rows.map((row) => {
+        const pid = row.post ? String(row.post._id) : "";
+        const openRep = pid ? openReportsByPost.get(pid) || 0 : 0;
+        const sightRisk = row.reason === "sightengine_text" || row.reason === "sightengine_image" ? 35 : 20;
+        const risk_score = Math.max(0, Math.min(100, 100 - openRep * 6 - sightRisk));
+        return {
+          id: String(row._id),
+          reason: row.reason,
+          text: (row.text || "").slice(0, 200),
+          reviewed_by_admin: row.reviewed_by_admin,
+          createdAt: row.createdAt,
+          reporterContext: row.user?.email,
+          postId: pid,
+          postPreview: row.post?.content ? String(row.post.content).slice(0, 120) : "",
+          postAuthorEmail: row.post?.user?.email,
+          circleName: row.post?.circle?.name || "",
+          open_reports: openRep,
+          risk_score,
+        };
+      }),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) || 1 },
     });
   } catch (e) {
@@ -802,7 +1253,7 @@ router.get("/analytics", async (req, res) => {
       dates.push(ds.toISOString().slice(0, 10));
       const [u, p, l, c] = await Promise.all([
         User.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
-        Post.countDocuments({ is_public: true, createdAt: { $gte: ds, $lte: de } }),
+        Post.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
         Like.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
         Comment.countDocuments({ is_deleted: false, createdAt: { $gte: ds, $lte: de } }),
       ]);

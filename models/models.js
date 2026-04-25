@@ -20,7 +20,11 @@ const userSchema = new Schema({
       message: props => `${props.value} is not a valid 6-digit OTP!`
     }
   },
-  otpExpiresAt: Date
+  otpExpiresAt: Date,
+  /** Superadmin: block sign-in and API use when true (see bannedUntil for timed bans). */
+  isBanned: { type: Boolean, default: false },
+  bannedUntil: { type: Date, default: null },
+  banReason: { type: String, default: "" },
 }, {
   // Disable virtuals and other potential middleware
   id: false,

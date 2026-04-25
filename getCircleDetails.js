@@ -18,6 +18,12 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ success: false, message: "Circle not found" });
     }
 
+    if (circle.suspended && circle.suspendedUntil && circle.suspendedUntil <= new Date()) {
+      circle.suspended = false;
+      circle.suspendedUntil = null;
+      await circle.save();
+    }
+
     if (!circle.created_by) {
       return res.status(500).json({ success: false, message: "Circle creator not found" });
     }
@@ -137,6 +143,8 @@ router.get("/:id", async (req, res) => {
         rules: circle.rules,
         cover_image: circle.cover_image,
         visibility: circle.visibility,
+        suspended: !!circle.suspended,
+        suspended_until: circle.suspendedUntil || null,
         created_by: {
           id: circle.created_by._id,
           email: circle.created_by.email,

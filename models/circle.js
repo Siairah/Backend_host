@@ -34,6 +34,16 @@ const circleSchema = new Schema({
     type: String,
     enum: ['public', 'private'],
     default: 'public'
+  },
+  /** Superadmin: freeze circle activity (new posts, etc. can check this flag). */
+  suspended: {
+    type: Boolean,
+    default: false
+  },
+  /** When set and in the future, circle stays suspended until this time (then clear on read). */
+  suspendedUntil: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true,

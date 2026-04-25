@@ -34,6 +34,25 @@ router.post("/", async (req, res) => {
       });
     }
 
+    if (user.isBanned) {
+      const now = new Date();
+      if (user.bannedUntil && user.bannedUntil <= now) {
+        user.isBanned = false;
+        user.bannedUntil = null;
+        user.banReason = "";
+        await user.save();
+      } else {
+        const untilMsg = user.bannedUntil
+          ? ` Banned until ${user.bannedUntil.toISOString()}.`
+          : "";
+        return res.status(403).json({
+          success: false,
+          message: (user.banReason || "Your account has been suspended.") + untilMsg,
+          banned: true,
+        });
+      }
+    }
+
     const token = jwt.sign(
       { id: user._id, email: user.email },
       process.env.JWT_SECRET || "supersecretkey",

@@ -1,3 +1,22 @@
+/**
+ * Admin API (matches Next.js `src/admin/managementApi.ts` + `src/admin/adminApi.ts`).
+ *
+ * Mounted at `/admin` from `index.js` → `app.use("/admin", adminRoutes)`.
+ *
+ * Public:
+ *   POST /admin/login          → JWT `{ type: "admin" }` (use Authorization: Bearer … on other routes)
+ *
+ * Protected (Bearer + verifyAdmin):
+ *   GET  /admin/dashboard-stats   → adminApi `fetchAdminDashboard`
+ *   … all routes in `adminManagementApi.js`:
+ *   GET/POST/PATCH/DELETE /admin/users, /users/bulk, /users/:id/toggle-active
+ *   GET/DELETE /admin/posts, /posts/bulk, /posts/:id
+ *   GET/DELETE /admin/comments, /comments/bulk
+ *   GET/DELETE /admin/circles, /circles/bulk, /circles/:id
+ *   GET/POST /admin/reports, /reports/bulk, /reports/:id/resolve
+ *   GET/POST /admin/flagged-posts, /flagged-posts/bulk, /flagged-posts/:id/review
+ *   GET /admin/analytics
+ */
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { User } from "./models/index.js";
@@ -78,10 +97,9 @@ router.get("/dashboard-stats", verifyAdmin, async (req, res) => {
       User.countDocuments({}),
       User.countDocuments({ createdAt: { $gte: today, $lte: endToday } }),
       User.countDocuments({ updatedAt: { $gte: fiveMinAgo } }),
-      Post.countDocuments({ is_public: true }),
-      Post.countDocuments({ is_public: true, createdAt: { $gte: today, $lte: endToday } }),
+      Post.countDocuments({}),
+      Post.countDocuments({ createdAt: { $gte: today, $lte: endToday } }),
       Post.countDocuments({
-        is_public: true,
         createdAt: { $gte: yesterdayStart, $lte: yesterdayEnd },
       }),
       PostMedia.distinct("post"),
@@ -109,7 +127,7 @@ router.get("/dashboard-stats", verifyAdmin, async (req, res) => {
 
     const posts_with_media = Array.isArray(posts_media_ids) ? posts_media_ids.length : 0;
 
-    const latest_posts_raw = await Post.find({ is_public: true })
+    const latest_posts_raw = await Post.find({})
       .sort({ createdAt: -1 })
       .limit(5)
       .populate("user", "email")
@@ -149,7 +167,7 @@ router.get("/dashboard-stats", verifyAdmin, async (req, res) => {
 
       const [u, po, li, co] = await Promise.all([
         User.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
-        Post.countDocuments({ is_public: true, createdAt: { $gte: ds, $lte: de } }),
+        Post.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
         Like.countDocuments({ createdAt: { $gte: ds, $lte: de } }),
         Comment.countDocuments({
           is_deleted: false,

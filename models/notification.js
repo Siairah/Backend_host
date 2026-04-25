@@ -48,7 +48,8 @@ const notificationSchema = new Schema({
       'user_unbanned',
       'new_post',
       'post_reported',
-      'post_flagged_auto'
+      'post_flagged_auto',
+      'admin_broadcast'
     ],
     required: true
   },

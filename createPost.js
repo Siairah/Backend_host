@@ -44,6 +44,18 @@ router.post("/", upload.any(), async (req, res) => {
         return res.status(404).json({ success: false, message: "Circle not found" });
       }
 
+      if (circle.suspendedUntil && circle.suspendedUntil <= new Date()) {
+        circle.suspended = false;
+        circle.suspendedUntil = null;
+        await circle.save();
+      }
+      if (circle.suspended) {
+        return res.status(403).json({
+          success: false,
+          message: "This circle is suspended by moderators. New posts are disabled.",
+        });
+      }
+
       const membership = await CircleMembership.findOne({ user: user_id, circle: circle_id });
       if (!membership) {
         return res.status(403).json({ success: false, message: "You must be a member of this circle" });
