@@ -4,6 +4,7 @@ import multer from "multer";
 import cloudinary from "./cloudinaryConfig.js";
 import User from "./models/models.js";
 import Profile from "./models/profile.js";
+import { validateDobForRegistration } from "./dobValidation.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -31,6 +32,11 @@ router.post("/", upload.single("profile_pic"), async (req, res) => {
     
     if (!full_name || !dob || !gender) {
       return res.status(400).json({ success: false, message: "Profile information is required" });
+    }
+
+    const dobCheck = validateDobForRegistration(dob);
+    if (!dobCheck.ok) {
+      return res.status(400).json({ success: false, message: dobCheck.message });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
